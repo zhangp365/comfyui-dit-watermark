@@ -6,12 +6,13 @@ import math
 
 import torch
 
-from .grow_dit.core import build_layout, extract_bits
+from .grow_dit.core import DetectionResult, detect_payload
+from .grow_dit.robust import ROBUST_MODES, alignment_candidates
 from .grow_dit.sampler import GrowSamplerWrapper, GrowSettings
 
 
 def _settings(
-    message,
+    watermark,
     secret_key,
     strength,
     guidance_scale,
@@ -19,10 +20,11 @@ def _settings(
     dct_min,
     dct_max,
     max_channels,
+    channel_start,
     center_ratio,
 ) -> GrowSettings:
     settings = GrowSettings(
-        message=message,
+        watermark=watermark,
         secret_key=secret_key,
         strength=strength,
         guidance_scale=guidance_scale,
@@ -30,6 +32,7 @@ def _settings(
         dct_min=dct_min,
         dct_max=dct_max,
         max_channels=max_channels,
+        channel_start=channel_start,
         center_ratio=center_ratio,
     )
     settings.validate()
@@ -44,7 +47,7 @@ class GROWDiTSampler:
         return {
             "required": {
                 "sampler": ("SAMPLER",),
-                "message": ("STRING", {"default": "zhangp365123456"}),
+                "watermark": ("STRING", {"default": "zhangp36512345"}),
                 "secret_key": ("STRING", {"default": "watermark"}),
                 "strength": (
                     "FLOAT",
@@ -68,7 +71,7 @@ class GROWDiTSampler:
                 ),
                 "start_ratio": (
                     "FLOAT",
-                    {"default": 0.5, "min": 0.0, "max": 0.99, "step": 0.01},
+                    {"default": 0.0, "min": 0.0, "max": 0.99, "step": 0.01},
                 ),
                 "dct_min": (
                     "FLOAT",
@@ -81,6 +84,16 @@ class GROWDiTSampler:
                 "max_channels": (
                     "INT",
                     {"default": 8, "min": 1, "max": 256, "step": 1},
+                ),
+                "channel_start": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 255,
+                        "step": 1,
+                        "tooltip": "First latent channel in the contiguous profile.",
+                    },
                 ),
                 "center_ratio": (
                     "FLOAT",
@@ -121,10 +134,34 @@ class GROWWatermarkDetect:
                     "INT",
                     {"default": 8, "min": 1, "max": 256, "step": 1},
                 ),
+                "channel_start": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 255,
+                        "step": 1,
+                        "tooltip": "First latent channel in the contiguous profile.",
+                    },
+                ),
                 "center_ratio": (
                     "FLOAT",
                     {"default": 1.0, "min": 0.25, "max": 1.0, "step": 0.05},
                 ),
+                "max_watermark_bytes": (
+                    "INT",
+                    {
+                        "default": 64,
+                        "min": 1,
+                        "max": 250,
+                        "step": 1,
+                        "tooltip": (
+                            "Blind detection checks candidate UTF-8 byte lengths up to "
+                            "this value; a larger limit is slower."
+                        ),
+                    },
+                ),
+                "robust_mode": (ROBUST_MODES, {"default": "none"}),
             }
         }
 
@@ -149,24 +186,34 @@ class GROWWatermarkDetect:
         dct_min,
         dct_max,
         max_channels,
+        channel_start,
         center_ratio,
+        max_watermark_bytes,
+        robust_mode,
     ):
         if image.ndim != 4:
             raise ValueError("image must be a ComfyUI [B,H,W,C] tensor")
-        latent = vae.encode(image)
-        layout = build_layout(
-            latent,
-            # The frame is always 256 bits. A placeholder message is sufficient
-            # to reconstruct its keyed coordinate layout during detection.
-            message="watermark",
-            secret_key=secret_key,
-            dct_min=dct_min,
-            dct_max=dct_max,
-            max_channels=max_channels,
-            strength=1.0,
-            center_ratio=center_ratio,
-        )
-        result = extract_bits(latent, layout)
+        result: DetectionResult | None = None
+        alignment = "identity"
+        for candidate_alignment, candidate in alignment_candidates(image, robust_mode):
+            candidate_result = detect_payload(
+                vae.encode(candidate),
+                secret_key=secret_key,
+                dct_min=dct_min,
+                dct_max=dct_max,
+                max_channels=max_channels,
+                center_ratio=center_ratio,
+                max_watermark_bytes=max_watermark_bytes,
+                channel_start=channel_start,
+            )
+            if result is None or candidate_result.min_vote_margin > result.min_vote_margin:
+                result = candidate_result
+                alignment = candidate_alignment
+            if candidate_result.ecc_valid:
+                result = candidate_result
+                alignment = candidate_alignment
+                break
+        assert result is not None
         values = (
             result.decoded_message,
             result.ecc_valid,
@@ -177,7 +224,9 @@ class GROWWatermarkDetect:
         summary = (
             f"decoded={result.decoded_message!r}; ecc_valid={result.ecc_valid}; "
             f"corrected_symbols={result.corrected_symbols}; "
-            f"min_vote_margin={result.min_vote_margin:.6f}"
+            f"min_vote_margin={result.min_vote_margin:.6f}; "
+            f"alignment={alignment}; "
+            f"raw_codeword_hex={result.raw_codeword_hex}"
         )
         return {"ui": {"text": [summary]}, "result": values}
 

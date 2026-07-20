@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 
 import torch
 
@@ -11,19 +12,30 @@ from .core import WatermarkLayout, build_layout, guide_denoised
 
 @dataclass(frozen=True)
 class GrowSettings:
-    message: str = "watermark"
+    watermark: str = "zhangp36512345"
     secret_key: str = "watermark"
     strength: float = 1.2
     guidance_scale: float = 4000.0
-    start_ratio: float = 0.5
+    start_ratio: float = 0.0
     dct_min: float = 0.15
     dct_max: float = 0.45
     max_channels: int = 8
+    channel_start: int = 0
     center_ratio: float = 1.0
 
     def validate(self) -> None:
-        if not self.message:
-            raise ValueError("message must not be empty")
+        if not self.watermark:
+            raise ValueError("watermark must not be empty")
+        payload_bytes = len(self.watermark.encode("utf-8"))
+        if payload_bytes > 250:
+            raise ValueError("watermark is too long; maximum is 250 UTF-8 bytes")
+        if payload_bytes > 32:
+            warnings.warn(
+                "Long watermark: more payload bits reduce frequency repetitions and "
+                "attack robustness, and require a larger/slower detector search bound.",
+                UserWarning,
+                stacklevel=2,
+            )
         if not self.secret_key:
             raise ValueError("secret_key must not be empty")
         if self.strength <= 0:
@@ -36,6 +48,8 @@ class GrowSettings:
             raise ValueError("require 0 <= dct_min < dct_max <= 1")
         if self.max_channels <= 0:
             raise ValueError("max_channels must be positive")
+        if self.channel_start < 0:
+            raise ValueError("channel_start must be non-negative")
         if not 0.0 < self.center_ratio <= 1.0:
             raise ValueError("center_ratio must be in (0, 1]")
 
@@ -74,13 +88,14 @@ class GrowDenoiserProxy:
         if self._layout is None or self._layout_signature != signature:
             self._layout = build_layout(
                 denoised,
-                message=self.settings.message,
+                message=self.settings.watermark,
                 secret_key=self.settings.secret_key,
                 dct_min=self.settings.dct_min,
                 dct_max=self.settings.dct_max,
                 max_channels=self.settings.max_channels,
                 strength=self.settings.strength,
                 center_ratio=self.settings.center_ratio,
+                channel_start=self.settings.channel_start,
             )
             self._layout_signature = signature
         return self._layout

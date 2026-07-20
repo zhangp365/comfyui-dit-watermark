@@ -15,19 +15,22 @@ def build_flux2_prompt(
     *,
     watermarked: bool,
     filename_prefix: str,
-    message: str = "watermark",
+    watermark: str = "zhangp36512345",
     secret_key: str = "watermark",
     strength: float = 1.2,
     guidance_scale: float = 4000.0,
-    start_ratio: float = 0.5,
+    start_ratio: float = 0.0,
     dct_min: float = 0.15,
     dct_max: float = 0.45,
     max_channels: int = 8,
+    channel_start: int = 0,
     center_ratio: float = 1.0,
+    max_watermark_bytes: int = 64,
+    robust_mode: str = "none",
     seed: int = 167626463082108,
     prompt: str = (
         "Keep the input image exactly unchanged. Preserve every pixel, color, "
-        "texture, composition, and detail. Add only the invisible watermark."
+        "texture, composition, and detail."
     ),
     input_image: str = "generation-b1e59042-91a9-4338-8308-5acb024f7c5a.png",
     scheduler_steps: int = 4,
@@ -139,7 +142,7 @@ def build_flux2_prompt(
             "class_type": "GROWDiTSampler",
             "inputs": {
                 "sampler": ["15", 0],
-                "message": message,
+                "watermark": watermark,
                 "secret_key": secret_key,
                 "strength": strength,
                 "guidance_scale": guidance_scale,
@@ -147,6 +150,7 @@ def build_flux2_prompt(
                 "dct_min": dct_min,
                 "dct_max": dct_max,
                 "max_channels": max_channels,
+                "channel_start": channel_start,
                 "center_ratio": center_ratio,
             },
         }
@@ -159,7 +163,10 @@ def build_flux2_prompt(
                 "dct_min": dct_min,
                 "dct_max": dct_max,
                 "max_channels": max_channels,
+                "channel_start": channel_start,
                 "center_ratio": center_ratio,
+                "max_watermark_bytes": max_watermark_bytes,
+                "robust_mode": robust_mode,
             },
         }
     if img2img_denoise is not None:
@@ -225,15 +232,22 @@ def main() -> None:
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--save-api", type=Path)
-    parser.add_argument("--message", default="watermark")
+    parser.add_argument("--watermark", default="zhangp36512345")
     parser.add_argument("--secret-key", default="watermark")
     parser.add_argument("--strength", type=float, default=1.2)
     parser.add_argument("--guidance-scale", type=float, default=4000.0)
-    parser.add_argument("--start-ratio", type=float, default=0.5)
+    parser.add_argument("--start-ratio", type=float, default=0.0)
     parser.add_argument("--dct-min", type=float, default=0.15)
     parser.add_argument("--dct-max", type=float, default=0.45)
     parser.add_argument("--max-channels", type=int, default=8)
+    parser.add_argument("--channel-start", type=int, default=0)
     parser.add_argument("--center-ratio", type=float, default=1.0)
+    parser.add_argument("--max-watermark-bytes", type=int, default=64)
+    parser.add_argument(
+        "--robust-mode",
+        choices=("none", "rotation", "crop_scale", "rotation_crop_scale"),
+        default="none",
+    )
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--scheduler-steps", type=int, default=4)
     parser.add_argument("--img2img-denoise", type=float)
@@ -241,7 +255,7 @@ def main() -> None:
     prompt = build_flux2_prompt(
         watermarked=args.mode == "watermarked",
         filename_prefix=args.prefix,
-        message=args.message,
+        watermark=args.watermark,
         secret_key=args.secret_key,
         strength=args.strength,
         guidance_scale=args.guidance_scale,
@@ -249,7 +263,10 @@ def main() -> None:
         dct_min=args.dct_min,
         dct_max=args.dct_max,
         max_channels=args.max_channels,
+        channel_start=args.channel_start,
         center_ratio=args.center_ratio,
+        max_watermark_bytes=args.max_watermark_bytes,
+        robust_mode=args.robust_mode,
         scheduler_steps=args.scheduler_steps,
         img2img_denoise=args.img2img_denoise,
     )

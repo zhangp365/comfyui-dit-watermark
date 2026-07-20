@@ -237,7 +237,7 @@
           ],
           [
             "124",
-            "message"
+            "watermark"
           ],
           [
             "124",
@@ -313,7 +313,7 @@
       ],
       "size": [
         270,
-        234
+        286
       ],
       "flags": {},
       "order": 5,
@@ -367,7 +367,10 @@
         0.15,
         0.45,
         8,
-        1
+        0,
+        1,
+        64,
+        "none"
       ]
     }
   ],
@@ -522,7 +525,7 @@
           },
           {
             "id": "a0443893-59c8-43a0-aff2-2097d8c28a67",
-            "name": "message",
+            "name": "watermark",
             "type": "STRING",
             "linkIds": [
               202
@@ -1589,11 +1592,11 @@
                 "link": 144
               },
               {
-                "localized_name": "message",
-                "name": "message",
+                "localized_name": "watermark",
+                "name": "watermark",
                 "type": "STRING",
                 "widget": {
-                  "name": "message"
+                  "name": "watermark"
                 },
                 "link": 202
               },
@@ -1623,14 +1626,15 @@
               "ver": "0.2.0"
             },
             "widgets_values": [
-              "zhangp365123456",
+              "zhangp36512345",
               "watermark",
               1.2,
               4000,
-              0.5,
+              0,
               0.15,
               0.45,
               8,
+              0,
               1
             ]
           },

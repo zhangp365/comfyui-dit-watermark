@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 
 from .codec import bits_to_bytes, message_to_bits
-from .ecc import decode_frame
+from .ecc import MAX_MESSAGE_BYTES, frame_bytes_for_payload_length, decode_frame
 
 
 @dataclass(frozen=True)
@@ -74,21 +74,56 @@ def build_layout(
     max_channels: int = 8,
     strength: float = 0.02,
     center_ratio: float = 1.0,
+    channel_start: int = 0,
 ) -> WatermarkLayout:
     """Build a deterministic, repeated signed-frequency target."""
+    return build_layout_for_bits(
+        latent,
+        message_to_bits(message),
+        secret_key,
+        dct_min=dct_min,
+        dct_max=dct_max,
+        max_channels=max_channels,
+        strength=strength,
+        center_ratio=center_ratio,
+        channel_start=channel_start,
+    )
+
+
+def build_layout_for_bits(
+    latent: torch.Tensor,
+    bits: list[int] | tuple[int, ...],
+    secret_key: str,
+    dct_min: float = 0.15,
+    dct_max: float = 0.45,
+    max_channels: int = 8,
+    strength: float = 0.02,
+    center_ratio: float = 1.0,
+    channel_start: int = 0,
+) -> WatermarkLayout:
+    """Build a deterministic layout for an already encoded elastic frame."""
     if latent.ndim != 4:
         raise ValueError(f"expected a 4D [B,C,H,W] latent, got {tuple(latent.shape)}")
     if not 0.0 <= dct_min < dct_max <= 1.0:
         raise ValueError("require 0 <= dct_min < dct_max <= 1")
     if max_channels <= 0:
         raise ValueError("max_channels must be positive")
+    if channel_start < 0:
+        raise ValueError("channel_start must be non-negative")
     if strength <= 0:
         raise ValueError("strength must be positive")
+    if not bits or len(bits) % 8 or any(bit not in (0, 1) for bit in bits):
+        raise ValueError("bits must be a non-empty byte-aligned binary sequence")
 
-    bits = message_to_bits(message)
+    bits = list(bits)
     patch = _center_patch(latent, center_ratio)
     _, channel_count, height, width = patch.shape
-    used_channels = min(max_channels, channel_count, len(bits))
+    if channel_start >= channel_count:
+        raise ValueError(
+            f"channel_start {channel_start} is outside latent with "
+            f"{channel_count} channels"
+        )
+    used_channels = min(max_channels, channel_count - channel_start, len(bits))
     if used_channels <= 0:
         raise ValueError("latent has no usable channels")
 
@@ -110,8 +145,9 @@ def build_layout(
 
     base_count, remainder = divmod(len(bits), used_channels)
     bit_offset = 0
-    for channel in range(used_channels):
-        bit_count = base_count + (1 if channel < remainder else 0)
+    for local_channel in range(used_channels):
+        channel = channel_start + local_channel
+        bit_count = base_count + (1 if local_channel < remainder else 0)
         repetitions = len(shuffled) // bit_count
         # An odd repetition count guarantees that hard majority voting cannot
         # end in a tie. Discarding one repetition is preferable to a secret
@@ -207,17 +243,31 @@ def extract_bits(latent: torch.Tensor, layout: WatermarkLayout) -> DetectionResu
     margins = [0.0] * len(layout.message_bits)
 
     for channel_layout in layout.channels:
-        for local_bit in range(channel_layout.bit_count):
-            votes: list[int] = []
-            for repeat_index in range(channel_layout.repetitions):
-                index = repeat_index * channel_layout.bit_count + local_bit
-                h, w = channel_layout.coordinates[index]
-                votes.append(int(transformed[0, channel_layout.channel, h, w] > 0))
-            ones = sum(votes)
-            zeros = len(votes) - ones
-            global_bit = channel_layout.bit_offset + local_bit
-            decoded[global_bit] = int(ones > zeros)
-            margins[global_bit] = abs(ones - zeros) / len(votes)
+        coordinate_tensor = torch.tensor(
+            channel_layout.coordinates,
+            device=transformed.device,
+            dtype=torch.long,
+        )
+        votes = (
+            transformed[
+                0,
+                channel_layout.channel,
+                coordinate_tensor[:, 0],
+                coordinate_tensor[:, 1],
+            ]
+            .gt(0)
+            .reshape(channel_layout.repetitions, channel_layout.bit_count)
+        )
+        ones = votes.sum(dim=0)
+        channel_decoded = ones.gt(channel_layout.repetitions // 2).to(torch.uint8)
+        channel_margins = (
+            (2 * ones - channel_layout.repetitions).abs().float()
+            / channel_layout.repetitions
+        )
+        start = channel_layout.bit_offset
+        stop = start + channel_layout.bit_count
+        decoded[start:stop] = channel_decoded.cpu().tolist()
+        margins[start:stop] = channel_margins.cpu().tolist()
 
     raw_codeword = bits_to_bytes(decoded)
     frame = decode_frame(raw_codeword)
@@ -229,3 +279,54 @@ def extract_bits(latent: torch.Tensor, layout: WatermarkLayout) -> DetectionResu
         bits=tuple(decoded),
         raw_codeword_hex=raw_codeword.hex(),
     )
+
+
+@torch.no_grad()
+def detect_payload(
+    latent: torch.Tensor,
+    secret_key: str,
+    dct_min: float = 0.15,
+    dct_max: float = 0.45,
+    max_channels: int = 8,
+    center_ratio: float = 1.0,
+    max_watermark_bytes: int = 64,
+    channel_start: int = 0,
+) -> DetectionResult:
+    """Blindly detect a self-describing elastic ECC frame.
+
+    The detector does not receive the expected watermark. It enumerates frame
+    lengths and accepts only a candidate whose RS parity, embedded byte length,
+    and UTF-8 payload all validate.
+    """
+    if not 1 <= max_watermark_bytes <= MAX_MESSAGE_BYTES:
+        raise ValueError(
+            f"max_watermark_bytes must be in [1, {MAX_MESSAGE_BYTES}]"
+        )
+    last_result: DetectionResult | None = None
+    for payload_bytes in range(1, max_watermark_bytes + 1):
+        frame_bits = [0] * (frame_bytes_for_payload_length(payload_bytes) * 8)
+        try:
+            layout = build_layout_for_bits(
+                latent,
+                frame_bits,
+                secret_key,
+                dct_min=dct_min,
+                dct_max=dct_max,
+                max_channels=max_channels,
+                strength=1.0,
+                center_ratio=center_ratio,
+                channel_start=channel_start,
+            )
+        except ValueError as error:
+            if "payload needs" in str(error):
+                break
+            raise
+        result = extract_bits(latent, layout)
+        if result.ecc_valid:
+            return result
+        last_result = result
+    if last_result is None:
+        raise ValueError("selected latent frequency band cannot hold a watermark frame")
+    # Returning the longest attempted frame makes failed detections reproducible
+    # and lets callers that intentionally set a payload bound inspect its raw bits.
+    return last_result

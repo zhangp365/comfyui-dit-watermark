@@ -11,14 +11,15 @@ from typing import Any
 
 
 DEFAULT_WIDGETS = [
-    "watermark",
+    "zhangp36512345",
     "watermark",
     1.2,
     4000.0,
-    0.5,
+    0.0,
     0.15,
     0.45,
     8,
+    0,
     1.0,
 ]
 
@@ -48,19 +49,22 @@ def _state_max(graph: dict[str, Any], name: str, observed: int) -> int:
 
 def inject_graph(
     graph: dict[str, Any],
-    message: str = "watermark",
+    watermark: str = "zhangp36512345",
     secret_key: str = "watermark",
     strength: float = 1.2,
     guidance_scale: float = 4000.0,
-    start_ratio: float = 0.5,
+    start_ratio: float = 0.0,
     dct_min: float = 0.15,
     dct_max: float = 0.45,
     max_channels: int = 8,
+    channel_start: int = 0,
     center_ratio: float = 1.0,
+    max_watermark_bytes: int = 64,
+    robust_mode: str = "none",
     add_detector: bool = True,
     identity_prompt: str = (
         "Keep the input image exactly unchanged. Preserve every pixel, color, "
-        "texture, composition, and detail. Add only the invisible watermark."
+        "texture, composition, and detail."
     ),
 ) -> bool:
     if any(node.get("type") == "GROWDiTSampler" for node in graph.get("nodes", [])):
@@ -113,7 +117,7 @@ def inject_graph(
         }
     )
     widgets = [
-        message,
+        watermark,
         secret_key,
         strength,
         guidance_scale,
@@ -121,6 +125,7 @@ def inject_graph(
         dct_min,
         dct_max,
         max_channels,
+        channel_start,
         center_ratio,
     ]
     grow_node = {
@@ -187,7 +192,10 @@ def inject_graph(
                 dct_min,
                 dct_max,
                 max_channels,
+                channel_start,
                 center_ratio,
+                max_watermark_bytes,
+                robust_mode,
             ],
         }
         graph["nodes"].append(detector)
@@ -234,15 +242,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--message", default="watermark")
+    parser.add_argument("--watermark", default="zhangp36512345")
     parser.add_argument("--secret-key", default="watermark")
     parser.add_argument("--strength", type=float, default=1.2)
     parser.add_argument("--guidance-scale", type=float, default=4000.0)
-    parser.add_argument("--start-ratio", type=float, default=0.5)
+    parser.add_argument("--start-ratio", type=float, default=0.0)
     parser.add_argument("--dct-min", type=float, default=0.15)
     parser.add_argument("--dct-max", type=float, default=0.45)
     parser.add_argument("--max-channels", type=int, default=8)
+    parser.add_argument("--channel-start", type=int, default=0)
     parser.add_argument("--center-ratio", type=float, default=1.0)
+    parser.add_argument("--max-watermark-bytes", type=int, default=64)
+    parser.add_argument(
+        "--robust-mode",
+        choices=("none", "rotation", "crop_scale", "rotation_crop_scale"),
+        default="none",
+    )
     parser.add_argument("--without-detector", action="store_true")
     args = parser.parse_args()
 
@@ -255,7 +270,7 @@ def main() -> None:
     workflow = json.loads(source.read_text(encoding="utf-8"))
     updated = inject_workflow(
         workflow,
-        message=args.message,
+        watermark=args.watermark,
         secret_key=args.secret_key,
         strength=args.strength,
         guidance_scale=args.guidance_scale,
@@ -263,7 +278,10 @@ def main() -> None:
         dct_min=args.dct_min,
         dct_max=args.dct_max,
         max_channels=args.max_channels,
+        channel_start=args.channel_start,
         center_ratio=args.center_ratio,
+        max_watermark_bytes=args.max_watermark_bytes,
+        robust_mode=args.robust_mode,
         add_detector=not args.without_detector,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)

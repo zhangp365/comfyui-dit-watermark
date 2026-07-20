@@ -2,3 +2,11 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 validation/outputs/
+
+# Local benchmark plans, runners, and generated artifacts
+docs/superpowers/plans/
+validation/
+scripts/attack_benchmark.py
+scripts/run_channel_profile_benchmark.py
+scripts/run_three_image_benchmark.py
+tests/test_attack_benchmark.py

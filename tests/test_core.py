@@ -5,7 +5,7 @@ import unittest
 import torch
 
 from grow_dit.codec import bits_to_message, message_to_bits
-from grow_dit.core import build_layout, extract_bits, guide_denoised
+from grow_dit.core import build_layout, detect_payload, extract_bits, guide_denoised
 
 
 class CodecTests(unittest.TestCase):
@@ -31,6 +31,30 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(torch.equal(first.target, second.target))
         self.assertNotEqual(first.channels[0].coordinates, other.channels[0].coordinates)
         self.assertTrue(all(channel.repetitions % 2 == 1 for channel in first.channels))
+
+    def test_layout_uses_requested_contiguous_channel_profile(self) -> None:
+        layout = build_layout(
+            self.latent,
+            "grow",
+            "secret",
+            max_channels=8,
+            channel_start=8,
+        )
+        self.assertEqual(
+            [channel.channel for channel in layout.channels], list(range(8, 16))
+        )
+        self.assertFalse(layout.mask[:, :8].any().item())
+        self.assertFalse(layout.mask[:, 16:].any().item())
+
+    def test_layout_rejects_channel_start_outside_latent(self) -> None:
+        with self.assertRaisesRegex(ValueError, "channel_start"):
+            build_layout(
+                self.latent,
+                "grow",
+                "secret",
+                max_channels=8,
+                channel_start=32,
+            )
 
     def test_guidance_reduces_keyed_frequency_loss(self) -> None:
         layout = build_layout(
@@ -67,6 +91,31 @@ class CoreTests(unittest.TestCase):
         small = torch.zeros(1, 1, 8, 8)
         with self.assertRaisesRegex(ValueError, "payload needs"):
             build_layout(small, "ok", "key", 0.1, 0.2, 1, 0.1)
+
+    def test_blind_detection_enumerates_elastic_frame_lengths(self) -> None:
+        layout = build_layout(
+            self.latent, "grow", "secret", 0.10, 0.50, 8, 0.1
+        )
+        guided = self.latent
+        for _ in range(20):
+            guided, _, _ = guide_denoised(guided, layout, 500.0)
+        result = detect_payload(
+            guided, "secret", 0.10, 0.50, 8, 1.0, max_watermark_bytes=8
+        )
+        self.assertTrue(result.ecc_valid)
+        self.assertEqual(result.decoded_message, "grow")
+
+    def test_blind_detection_bound_can_exclude_longer_payload(self) -> None:
+        layout = build_layout(
+            self.latent, "longer", "secret", 0.10, 0.50, 8, 0.1
+        )
+        guided = self.latent
+        for _ in range(20):
+            guided, _, _ = guide_denoised(guided, layout, 500.0)
+        result = detect_payload(
+            guided, "secret", 0.10, 0.50, 8, 1.0, max_watermark_bytes=4
+        )
+        self.assertFalse(result.ecc_valid)
 
 
 if __name__ == "__main__":

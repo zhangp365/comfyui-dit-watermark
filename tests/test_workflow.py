@@ -46,8 +46,12 @@ class WorkflowInjectionTests(unittest.TestCase):
         self.assertEqual(detector["inputs"][0]["link"], 14)
         self.assertEqual(detector["inputs"][1]["link"], 15)
         self.assertEqual(detector["widgets_values"][0], "watermark")
-        self.assertEqual(len(detector["widgets_values"]), 5)
-        self.assertEqual(grow["widgets_values"][0], "watermark")
+        self.assertEqual(len(detector["widgets_values"]), 8)
+        self.assertEqual(detector["widgets_values"][4], 0)
+        self.assertEqual(detector["widgets_values"][-2:], [64, "none"])
+        self.assertEqual(grow["widgets_values"][0], "zhangp36512345")
+        self.assertEqual(grow["widgets_values"][4], 0.0)
+        self.assertEqual(grow["widgets_values"][8], 0)
 
     def test_existing_grow_node_is_not_duplicated(self) -> None:
         workflow = {"nodes": [{"id": 1, "type": "GROWDiTSampler"}], "links": []}
