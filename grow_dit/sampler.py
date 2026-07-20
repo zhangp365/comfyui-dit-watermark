@@ -11,10 +11,10 @@ from .core import WatermarkLayout, build_layout, guide_denoised
 
 @dataclass(frozen=True)
 class GrowSettings:
-    message: str
-    secret_key: str
-    strength: float = 1.0
-    guidance_scale: float = 2000.0
+    message: str = "watermark"
+    secret_key: str = "watermark"
+    strength: float = 1.2
+    guidance_scale: float = 4000.0
     start_ratio: float = 0.5
     dct_min: float = 0.15
     dct_max: float = 0.45

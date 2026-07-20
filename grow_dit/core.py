@@ -8,7 +8,8 @@ import hashlib
 import torch
 import torch.nn.functional as F
 
-from .codec import bits_to_message, message_to_bits
+from .codec import bits_to_bytes, message_to_bits
+from .ecc import decode_frame
 
 
 @dataclass(frozen=True)
@@ -34,12 +35,11 @@ class WatermarkLayout:
 @dataclass(frozen=True)
 class DetectionResult:
     decoded_message: str
-    exact_match: bool
-    correct_bits: int
-    total_bits: int
-    bit_accuracy: float
+    ecc_valid: bool
+    corrected_symbols: int
     min_vote_margin: float
     bits: tuple[int, ...]
+    raw_codeword_hex: str
 
 
 def frequency_transform(latent: torch.Tensor) -> torch.Tensor:
@@ -219,14 +219,13 @@ def extract_bits(latent: torch.Tensor, layout: WatermarkLayout) -> DetectionResu
             decoded[global_bit] = int(ones > zeros)
             margins[global_bit] = abs(ones - zeros) / len(votes)
 
-    expected = list(layout.message_bits)
-    correct = sum(actual == wanted for actual, wanted in zip(decoded, expected))
+    raw_codeword = bits_to_bytes(decoded)
+    frame = decode_frame(raw_codeword)
     return DetectionResult(
-        decoded_message=bits_to_message(decoded),
-        exact_match=decoded == expected,
-        correct_bits=correct,
-        total_bits=len(expected),
-        bit_accuracy=correct / len(expected),
+        decoded_message=frame.message,
+        ecc_valid=frame.valid,
+        corrected_symbols=frame.corrected_symbols,
         min_vote_margin=min(margins),
         bits=tuple(decoded),
+        raw_codeword_hex=raw_codeword.hex(),
     )

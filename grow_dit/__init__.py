@@ -1,6 +1,7 @@
 """Model-agnostic GROW latent watermark primitives."""
 
 from .codec import bits_to_message, message_to_bits
+from .ecc import FrameDecodeResult, decode_frame, encode_frame
 from .core import (
     DetectionResult,
     WatermarkLayout,
@@ -12,6 +13,7 @@ from .core import (
 
 __all__ = [
     "DetectionResult",
+    "FrameDecodeResult",
     "WatermarkLayout",
     "bits_to_message",
     "build_layout",
@@ -19,4 +21,6 @@ __all__ = [
     "frequency_transform",
     "guide_denoised",
     "message_to_bits",
+    "decode_frame",
+    "encode_frame",
 ]

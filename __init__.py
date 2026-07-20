@@ -1,4 +1,4 @@
-"""ComfyUI-GROW-DiT custom node entry point."""
+"""comfyui-dit-watermark custom node entry point."""
 
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 

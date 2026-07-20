@@ -59,14 +59,14 @@ class CoreTests(unittest.TestCase):
         for _ in range(20):
             guided, _, _ = guide_denoised(guided, layout, 500.0)
         result = extract_bits(guided, layout)
-        self.assertTrue(result.exact_match)
+        self.assertTrue(result.ecc_valid)
         self.assertEqual(result.decoded_message, "grow")
-        self.assertEqual(result.correct_bits, result.total_bits)
+        self.assertLessEqual(result.corrected_symbols, 2)
 
     def test_payload_capacity_is_validated(self) -> None:
         small = torch.zeros(1, 1, 8, 8)
         with self.assertRaisesRegex(ValueError, "payload needs"):
-            build_layout(small, "payload too long", "key", 0.1, 0.2, 1, 0.1)
+            build_layout(small, "ok", "key", 0.1, 0.2, 1, 0.1)
 
 
 if __name__ == "__main__":

@@ -1,151 +1,135 @@
-# ComfyUI-GROW-DiT Flux2 Klein 验收报告
+# comfyui-dit-watermark：Flux2 Klein 验收报告
 
 ## 1. 验收结论
 
-自定义节点已在 `10.168.1.168:8189` 的 ComfyUI 容器中部署并通过端到端测试。
+自定义节点已部署到 `10.168.1.168:8189` 的 ComfyUI 容器，并完成 Flux2 Klein 4B Distilled 端到端验证。
 
 | 验收项 | 要求 | 实测 | 结论 |
 |---|---:|---:|---|
-| GROW message Exact Match | 完整恢复 | `zhangp365123456`，120/120 bit | **通过** |
-| Bit Accuracy | 100% | 100% | **通过** |
-| Watermarked vs clean PSNR | > 40 dB | **46.115162 dB** | **通过** |
-| 工作流集成 | 可运行 | sampler 与 detector 已加入 Flux2 子图 | **通过** |
-| ComfyUI 节点加载 | 3 个节点可发现 | 3/3 | **通过** |
+| 水印内容 | `watermark` | 无先验 message 解码为 `watermark` | **通过** |
+| ECC | 可纠正两个错误符号 | 单元测试覆盖任意 1 个及代表性 2 个 byte symbol；实图修正 1 个 | **通过** |
+| 水印增量 PSNR | > 40 dB | **42.748101 dB** | **通过** |
+| 工作流 | 仅保留一个 UI JSON | 1 个 | **通过** |
+| 节点加载 | 3 个节点可发现 | 3/3 | **通过** |
 
-最终 PSNR 比最低要求高 `6.115162 dB`。Clean 工作流重复运行得到逐像素完全相同的 PNG（MSE=0，PSNR=∞），因此水印对比不受随机漂移影响。
+这里的 42.748101 dB 比较同一模型、输入、prompt、seed 和采样参数下的无水印输出与水印输出，只度量水印带来的变化。
 
-## 2. 远程运行环境
+## 2. 远程环境
 
 | 项目 | 值 |
 |---|---|
-| Host | `10.168.1.168` |
-| ComfyUI HTTP | `http://10.168.1.168:8189` |
-| Container | `a993c199f853` (`gallant_wilson`) |
+| Host / HTTP | `10.168.1.168:8189` |
 | ComfyUI path | `/app` |
-| Custom node path | `/app/custom_nodes/ComfyUI-GROW-DiT` |
-| ComfyUI version | `0.26.0` |
-| ComfyUI commit | `5db3311946d5109434b9c9623d37c05195612416` |
+| Custom node path | `/app/custom_nodes/comfyui-dit-watermark` |
+| ComfyUI | 0.26.0 |
 | Python | 3.11.11 |
-| PyTorch | `2.6.0+cu124` |
-| GPU | NVIDIA GeForce RTX 4090, 24 GB |
+| PyTorch | 2.6.0+cu124 |
+| GPU | NVIDIA GeForce RTX 4090 24 GB |
 
-启动日志确认 `/app/custom_nodes/ComfyUI-GROW-DiT` 导入耗时 0.0 秒且无 traceback。`/object_info` 中已注册：
+注册节点：`GROWDiTSampler`、`GROWWatermarkDetect`、`GROWImagePSNR`。
 
-- `GROWDiTSampler`
-- `GROWWatermarkDetect`
-- `GROWImagePSNR`
-
-## 3. Flux2 工作流参数
-
-Clean 与 watermarked 两次运行只有 sampler 路径是否经过 `GROWDiTSampler` 这一项不同，其余输入完全一致。
+## 3. 最终工作流参数
 
 | 参数 | 值 |
 |---|---|
 | Diffusion model | `flux-2-klein-4b-fp8.safetensors` |
 | Text encoder | `qwen_3_4b.safetensors` |
 | VAE | `flux2-vae.safetensors` |
-| Prompt | `Change the dog color to blue.` |
-| Input | `generation-b1e59042-91a9-4338-8308-5acb024f7c5a.png` |
+| Prompt | `Keep the input image exactly unchanged. Preserve every pixel, color, texture, composition, and detail. Add only the invisible watermark.` |
 | Seed | `167626463082108` |
-| Sampler | Euler |
-| Flux2 scheduler steps | 4 |
-| CFG | 1.0 |
-| Output size | 752×1360 RGB |
+| Sampler / steps | Euler / 4 |
+| Message / secret key | `watermark` / `watermark` |
+| Strength | `1.20` |
+| Guidance scale | `4000` |
+| Start ratio | `0.50` |
+| Frequency band | `[0.15, 0.45)` |
+| Max channels / center ratio | `8` / `1.0` |
 
-最终 GROW 参数：
+UI 中 `strength` 按 0.01 步进和两位小数显示，`guidance_scale` 按整数步进显示。检测节点没有 message 输入，只用 secret key 和布局参数恢复帧。
 
-| 参数 | 值 |
-|---|---:|
-| Message | `zhangp365123456` |
-| Secret key | `watermark` |
-| Strength / sign margin | `1.0` |
-| Guidance scale | `2000.0` |
-| Start ratio | `0.5` |
-| DCT/FFT band | `[0.15, 0.45)` |
-| Max latent channels | `8` |
-| Center ratio | `1.0` |
-| Repetitions | 每个 bit 使用奇数次重复，避免多数投票平局 |
+## 4. 图像与 PSNR
 
-## 4. 技术实现
-
-节点沿用 GROW 的核心流程：在去噪后半程拦截 DiT 预测的干净 latent `x0`，对 keyed 中频区域执行正交归一化二维 FFT 实部运算，通过频域损失求取梯度，再把更新后的 `x0` 返回给原 ComfyUI sampler。
-
-针对 Flux2 Klein 的 4 步蒸馏工作流做了两项必要适配：
-
-1. ComfyUI sampler 运行在 inference mode 中，节点只在 4D latent 的频域 loss/gradient 小区域临时关闭 inference mode并启用 fp32 autograd，不改变 DiT 推理精度。
-2. 原 GROW 绝对 MSE 会把已经符号正确的大系数也拉向固定幅度。这里改为单边 sign-margin loss，只更新符号错误或间隔不足的系数，减少不可见水印造成的图像变化。
-
-检测节点使用同一个 Flux2 VAE 对输出图片编码，不需要 Stable Diffusion pipeline，也不进行 diffusion inversion。它使用相同 key 重建坐标，对重复系数做多数投票，并同时报告完整字符串与 bit 级结果。
-
-## 5. 最终结果
-
-ComfyUI detector 输出：
-
-```text
-decoded='zhangp365123456'
-exact=True
-bits=120/120
-accuracy=1.000000
-min_vote_margin=0.043478
-```
-
-PSNR 使用 `[0,1]` RGB 张量计算：
-
-```text
-MSE  = 0.00002446153997604016
-PSNR = 10 * log10(1 / MSE)
-     = 46.115162054336736 dB
-```
-
-ComfyUI 内部 `GROWImagePSNR` 节点独立输出：
-
-```text
-PSNR=46.115162 dB
-```
-
-两种计算结果在 0.000001 dB 精度内一致。
-
-## 6. 产物
-
-| 文件 | SHA-256 |
+| Identity clean reference | GROW + ECC watermarked |
 |---|---|
-| `validation/outputs/clean_final_00001_.png` | `E8C1A90659E7B3DA86D20FF218E68E5569EF5DAA074CF027B45B56C79E65220E` |
-| `validation/outputs/watermarked_final_00001_.png` | `36470DE6A8841A001A66241011EE90672F8DD677318F1914863BD4962FC2D36A` |
-| `workflows/flux2_klein_image_edit_grow.json` | `C8D356F6A10ECEFEBA2360FE62F893F215A9A4C2ADB2B1574C35F61B67EF453F` |
+| ![identity clean](outputs/identity_clean.png) | ![identity watermarked](outputs/identity_watermarked.png) |
 
-工作流位置：
-
-- 用户 Downloads 工作流：`C:\Users\zhangsongbo\Downloads\image_flux2_klein_image_edit_4b_distilled (2).json`
-- 原始工作流备份：`C:\Users\zhangsongbo\Downloads\image_flux2_klein_image_edit_4b_distilled (2).json.bak`
-- 仓库 UI 工作流：`workflows/flux2_klein_image_edit_grow.json`
-- 仓库 API 工作流：`workflows/flux2_klein_image_edit_grow_api.json`
-
-UI 工作流中的 sampler 链路已经从：
+检测结果：
 
 ```text
-KSamplerSelect (61) → SamplerCustomAdvanced (64)
+decoded_message='watermark'
+ecc_valid=True
+corrected_symbols=1
+min_vote_margin=0.090909
 ```
 
-变为：
+独立计算和 `GROWImagePSNR` 节点结果一致：
+
+```text
+MSE  = 0.00005311166263032
+PSNR = 42.748101030269 dB
+```
+
+原始上传图如下：
+
+![source input](outputs/source_input.png)
+
+源图为 736×1312，工作流输出为 752×1360。Flux2/VAE 即使在 identity prompt 下也会产生重建变化：缩放后的源图到 clean 为 23.60 dB，到 watermarked 为 23.49 dB。因此验收门槛采用 clean → watermarked 的 42.748101 dB，以排除模型重建误差。
+
+## 5. 纠错实现
+
+message 使用固定 32-byte Reed–Solomon 帧：
+
+```text
+1 byte UTF-8 length + 27 bytes payload/padding + 4 bytes parity
+```
+
+四个 parity symbols 可纠正任意两个损坏的 byte symbols；超过能力或帧长度/UTF-8 校验失败时返回 `ecc_valid=False`。ASCII 的两个字符对应两个 symbols；中文字符是多字节 UTF-8，纠错能力按 byte symbol 计算。
+
+## 6. 历史防攻击测试
+
+旧 SD2.1 GROW、120-bit payload 的 28 张压缩/percent 攻击结果：
+
+| 攻击 | Exact Match | 平均 Bit Accuracy |
+|---|---:|---:|
+| AVIF → JPG | 4/4 | 100% |
+| HEIF → JPG | 4/4 | 100% |
+| JXL → JPG | 1/4 | 99.38% |
+| MLIC++ | 1/4 | 98.96% |
+| Percent 系列 | **0/12** | 66.39% |
+
+Percent 系列全部失败；它们造成的大规模频域破坏超出两个 RS symbols 的纠错范围。JXL/MLIC++ 的部分失败样本只错少量 bit，新 ECC 有机会修复落在不超过两个 byte symbols 内的错误。
+
+SyncSeal 几何恢复历史结果：
+
+| 分组 | Attacked 平均 Bit Accuracy | Recovered 平均 Bit Accuracy |
+|---|---:|---:|
+| 旋转 | 49.17% | **98.33%** |
+| 裁剪/放大 | 50.63% | **65.42%** |
+| 全部 recovered | — | 80.83% |
+
+这些数据是历史 GROW baseline，不是 Flux2 + RS 新协议的直接攻击基准。旋转恢复表现较好，裁剪恢复仍不稳定。
+
+## 7. 产物
+
+- 唯一仓库工作流：`workflows/flux2_klein_image_edit_grow.json`
+- Downloads 工作流：`C:\Users\zhangsongbo\Downloads\image_flux2_klein_image_edit_4b_distilled (2).json`
+- 原始工作流备份：`C:\Users\zhangsongbo\Downloads\image_flux2_klein_image_edit_4b_distilled (2).json.bak`
+- 最终图片：`validation/outputs/identity_clean.png`、`identity_watermarked.png`
+
+UI sampler 链路：
 
 ```text
 KSamplerSelect (61) → GROWDiTSampler (124) → SamplerCustomAdvanced (64)
 ```
 
-`GROWWatermarkDetect (125)` 同时连接到 `VAEDecode` 的 IMAGE 输出和 `VAELoader` 的 VAE 输出。
+`GROWWatermarkDetect (125)` 连接 `VAEDecode` 的 IMAGE 和 `VAELoader` 的 VAE，无 message 输入。
 
-## 7. 自动化测试
+## 8. 自动化验证
 
-本地系统 Python 3.10 和远程容器 Python 3.11 均运行同一套 unittest。最终测试覆盖：
+```powershell
+python -m unittest discover -s tests -v
+```
 
-- UTF-8 payload 编解码；
-- secret key 布局确定性；
-- payload 容量校验；
-- 奇数重复与无平局多数投票；
-- fp32 频域 guidance 损失下降；
-- ComfyUI inference mode 回归；
-- sampler 后半程启用逻辑；
-- clean/watermarked API prompt 拓扑；
-- 旧式根图 link 与新式子图 link 的混合工作流注入。
+测试覆盖 guidance、inference mode、固定帧编解码、1/2-symbol 纠错、3-symbol 拒绝、节点 API 拓扑、img2img API 拓扑及 UI 子图注入。
 
-最终本地测试结果：14 项全部通过。最终完整仓库远程部署测试结果：14 项全部通过。
+最终结果：本机系统 Python 与远程 ComfyUI 容器均为 **20/20 通过**。

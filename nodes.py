@@ -48,11 +48,23 @@ class GROWDiTSampler:
                 "secret_key": ("STRING", {"default": "watermark"}),
                 "strength": (
                     "FLOAT",
-                    {"default": 1.0, "min": 0.0001, "max": 2.0, "step": 0.0001},
+                    {
+                        "default": 1.2,
+                        "min": 0.01,
+                        "max": 5.0,
+                        "step": 0.01,
+                        "round": 0.01,
+                    },
                 ),
                 "guidance_scale": (
                     "FLOAT",
-                    {"default": 2000.0, "min": 0.01, "max": 10000.0, "step": 0.01},
+                    {
+                        "default": 4000.0,
+                        "min": 1.0,
+                        "max": 20000.0,
+                        "step": 1.0,
+                        "round": 1.0,
+                    },
                 ),
                 "start_ratio": (
                     "FLOAT",
@@ -96,7 +108,6 @@ class GROWWatermarkDetect:
             "required": {
                 "image": ("IMAGE",),
                 "vae": ("VAE",),
-                "message": ("STRING", {"default": "zhangp365123456"}),
                 "secret_key": ("STRING", {"default": "watermark"}),
                 "dct_min": (
                     "FLOAT",
@@ -117,14 +128,13 @@ class GROWWatermarkDetect:
             }
         }
 
-    RETURN_TYPES = ("STRING", "BOOLEAN", "FLOAT", "INT", "INT", "FLOAT")
+    RETURN_TYPES = ("STRING", "BOOLEAN", "INT", "FLOAT", "STRING")
     RETURN_NAMES = (
         "decoded_message",
-        "exact_match",
-        "bit_accuracy",
-        "correct_bits",
-        "total_bits",
+        "ecc_valid",
+        "corrected_symbols",
         "min_vote_margin",
+        "raw_codeword_hex",
     )
     FUNCTION = "detect"
     CATEGORY = "GROW/watermark"
@@ -135,7 +145,6 @@ class GROWWatermarkDetect:
         self,
         image,
         vae,
-        message,
         secret_key,
         dct_min,
         dct_max,
@@ -147,7 +156,9 @@ class GROWWatermarkDetect:
         latent = vae.encode(image)
         layout = build_layout(
             latent,
-            message=message,
+            # The frame is always 256 bits. A placeholder message is sufficient
+            # to reconstruct its keyed coordinate layout during detection.
+            message="watermark",
             secret_key=secret_key,
             dct_min=dct_min,
             dct_max=dct_max,
@@ -158,16 +169,14 @@ class GROWWatermarkDetect:
         result = extract_bits(latent, layout)
         values = (
             result.decoded_message,
-            result.exact_match,
-            result.bit_accuracy,
-            result.correct_bits,
-            result.total_bits,
+            result.ecc_valid,
+            result.corrected_symbols,
             result.min_vote_margin,
+            result.raw_codeword_hex,
         )
         summary = (
-            f"decoded={result.decoded_message!r}; exact={result.exact_match}; "
-            f"bits={result.correct_bits}/{result.total_bits}; "
-            f"accuracy={result.bit_accuracy:.6f}; "
+            f"decoded={result.decoded_message!r}; ecc_valid={result.ecc_valid}; "
+            f"corrected_symbols={result.corrected_symbols}; "
             f"min_vote_margin={result.min_vote_margin:.6f}"
         )
         return {"ui": {"text": [summary]}, "result": values}

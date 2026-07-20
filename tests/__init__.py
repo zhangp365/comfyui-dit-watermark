@@ -1,1 +1,1 @@
-"""Tests for ComfyUI-GROW-DiT."""
+"""Tests for comfyui-dit-watermark."""

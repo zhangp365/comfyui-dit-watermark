@@ -11,10 +11,10 @@ from typing import Any
 
 
 DEFAULT_WIDGETS = [
-    "zhangp365123456",
     "watermark",
-    1.0,
-    2000.0,
+    "watermark",
+    1.2,
+    4000.0,
     0.5,
     0.15,
     0.45,
@@ -48,16 +48,20 @@ def _state_max(graph: dict[str, Any], name: str, observed: int) -> int:
 
 def inject_graph(
     graph: dict[str, Any],
-    message: str = "zhangp365123456",
+    message: str = "watermark",
     secret_key: str = "watermark",
-    strength: float = 1.0,
-    guidance_scale: float = 2000.0,
+    strength: float = 1.2,
+    guidance_scale: float = 4000.0,
     start_ratio: float = 0.5,
     dct_min: float = 0.15,
     dct_max: float = 0.45,
     max_channels: int = 8,
     center_ratio: float = 1.0,
     add_detector: bool = True,
+    identity_prompt: str = (
+        "Keep the input image exactly unchanged. Preserve every pixel, color, "
+        "texture, composition, and detail. Add only the invisible watermark."
+    ),
 ) -> bool:
     if any(node.get("type") == "GROWDiTSampler" for node in graph.get("nodes", [])):
         return False
@@ -135,8 +139,8 @@ def inject_graph(
         ],
         "properties": {
             "Node name for S&R": "GROWDiTSampler",
-            "cnr_id": "ComfyUI-GROW-DiT",
-            "ver": "0.1.0",
+            "cnr_id": "comfyui-dit-watermark",
+            "ver": "0.2.0",
         },
         "widgets_values": widgets,
     }
@@ -168,19 +172,17 @@ def inject_graph(
             ],
             "outputs": [
                 {"name": "decoded_message", "type": "STRING", "links": []},
-                {"name": "exact_match", "type": "BOOLEAN", "links": []},
-                {"name": "bit_accuracy", "type": "FLOAT", "links": []},
-                {"name": "correct_bits", "type": "INT", "links": []},
-                {"name": "total_bits", "type": "INT", "links": []},
+                {"name": "ecc_valid", "type": "BOOLEAN", "links": []},
+                {"name": "corrected_symbols", "type": "INT", "links": []},
                 {"name": "min_vote_margin", "type": "FLOAT", "links": []},
+                {"name": "raw_codeword_hex", "type": "STRING", "links": []},
             ],
             "properties": {
                 "Node name for S&R": "GROWWatermarkDetect",
-                "cnr_id": "ComfyUI-GROW-DiT",
-                "ver": "0.1.0",
+                "cnr_id": "comfyui-dit-watermark",
+                "ver": "0.2.0",
             },
             "widgets_values": [
-                message,
                 secret_key,
                 dct_min,
                 dct_max,
@@ -213,6 +215,10 @@ def inject_graph(
         _append_output_link(vae_loader, 0, vae_link)
         graph["state"]["lastNodeId"] = detector_id
         graph["state"]["lastLinkId"] = vae_link
+
+    text_nodes = [node for node in graph["nodes"] if node.get("type") == "CLIPTextEncode"]
+    if len(text_nodes) == 1:
+        text_nodes[0]["widgets_values"] = [identity_prompt]
     return True
 
 
@@ -228,10 +234,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--message", default="zhangp365123456")
+    parser.add_argument("--message", default="watermark")
     parser.add_argument("--secret-key", default="watermark")
-    parser.add_argument("--strength", type=float, default=1.0)
-    parser.add_argument("--guidance-scale", type=float, default=2000.0)
+    parser.add_argument("--strength", type=float, default=1.2)
+    parser.add_argument("--guidance-scale", type=float, default=4000.0)
     parser.add_argument("--start-ratio", type=float, default=0.5)
     parser.add_argument("--dct-min", type=float, default=0.15)
     parser.add_argument("--dct-max", type=float, default=0.45)

@@ -1,7 +1,7 @@
 [project]
-name = "comfyui-grow-dit"
-version = "0.1.0"
-description = "GROW progressive latent-frequency watermark nodes for ComfyUI DiT workflows"
+name = "comfyui-dit-watermark"
+version = "0.2.0"
+description = "GROW frequency-guided DiT watermarking with Reed-Solomon detection for ComfyUI"
 requires-python = ">=3.10"
 dependencies = ["torch>=2.1"]
 

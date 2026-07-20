@@ -15,18 +15,23 @@ def build_flux2_prompt(
     *,
     watermarked: bool,
     filename_prefix: str,
-    message: str = "zhangp365123456",
+    message: str = "watermark",
     secret_key: str = "watermark",
-    strength: float = 1.0,
-    guidance_scale: float = 2000.0,
+    strength: float = 1.2,
+    guidance_scale: float = 4000.0,
     start_ratio: float = 0.5,
     dct_min: float = 0.15,
     dct_max: float = 0.45,
     max_channels: int = 8,
     center_ratio: float = 1.0,
     seed: int = 167626463082108,
-    prompt: str = "Change the dog color to blue.",
+    prompt: str = (
+        "Keep the input image exactly unchanged. Preserve every pixel, color, "
+        "texture, composition, and detail. Add only the invisible watermark."
+    ),
     input_image: str = "generation-b1e59042-91a9-4338-8308-5acb024f7c5a.png",
+    scheduler_steps: int = 4,
+    img2img_denoise: float | None = None,
 ) -> dict[str, Any]:
     graph: dict[str, Any] = {
         "1": {"class_type": "LoadImage", "inputs": {"image": input_image}},
@@ -91,7 +96,11 @@ def build_flux2_prompt(
         "13": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
         "14": {
             "class_type": "Flux2Scheduler",
-            "inputs": {"steps": 4, "width": ["3", 0], "height": ["3", 1]},
+            "inputs": {
+                "steps": scheduler_steps,
+                "width": ["3", 0],
+                "height": ["3", 1],
+            },
         },
         "15": {
             "class_type": "KSamplerSelect",
@@ -146,7 +155,6 @@ def build_flux2_prompt(
             "inputs": {
                 "image": ["19", 0],
                 "vae": ["6", 0],
-                "message": message,
                 "secret_key": secret_key,
                 "dct_min": dct_min,
                 "dct_max": dct_max,
@@ -154,6 +162,15 @@ def build_flux2_prompt(
                 "center_ratio": center_ratio,
             },
         }
+    if img2img_denoise is not None:
+        if not 0.0 < img2img_denoise <= 1.0:
+            raise ValueError("img2img_denoise must be in (0, 1]")
+        graph["22"] = {
+            "class_type": "SplitSigmasDenoise",
+            "inputs": {"sigmas": ["14", 0], "denoise": img2img_denoise},
+        }
+        graph["18"]["inputs"]["sigmas"] = ["22", 1]
+        graph["18"]["inputs"]["latent_image"] = ["9", 0]
     return graph
 
 
@@ -208,16 +225,18 @@ def main() -> None:
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--save-api", type=Path)
-    parser.add_argument("--message", default="zhangp365123456")
+    parser.add_argument("--message", default="watermark")
     parser.add_argument("--secret-key", default="watermark")
-    parser.add_argument("--strength", type=float, default=1.0)
-    parser.add_argument("--guidance-scale", type=float, default=2000.0)
+    parser.add_argument("--strength", type=float, default=1.2)
+    parser.add_argument("--guidance-scale", type=float, default=4000.0)
     parser.add_argument("--start-ratio", type=float, default=0.5)
     parser.add_argument("--dct-min", type=float, default=0.15)
     parser.add_argument("--dct-max", type=float, default=0.45)
     parser.add_argument("--max-channels", type=int, default=8)
     parser.add_argument("--center-ratio", type=float, default=1.0)
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--scheduler-steps", type=int, default=4)
+    parser.add_argument("--img2img-denoise", type=float)
     args = parser.parse_args()
     prompt = build_flux2_prompt(
         watermarked=args.mode == "watermarked",
@@ -231,6 +250,8 @@ def main() -> None:
         dct_max=args.dct_max,
         max_channels=args.max_channels,
         center_ratio=args.center_ratio,
+        scheduler_steps=args.scheduler_steps,
+        img2img_denoise=args.img2img_denoise,
     )
     if args.save_api:
         args.save_api.parent.mkdir(parents=True, exist_ok=True)
