@@ -1,0 +1,12 @@
+[project]
+name = "comfyui-grow-dit"
+version = "0.1.0"
+description = "GROW progressive latent-frequency watermark nodes for ComfyUI DiT workflows"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.1"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pyright]
+pythonVersion = "3.10"
