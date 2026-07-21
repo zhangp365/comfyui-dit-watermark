@@ -2,7 +2,7 @@
 
 面向 ComfyUI 图像 DiT 工作流的 GROW 渐进式频域水印节点，支持无 diffusion inversion 检测、弹性 Reed–Solomon 帧、几何 robust search 和 RGB PSNR 测量。
 
-算法基于 [luopengchen/GROW](https://github.com/luopengchen/GROW)，并针对 ComfyUI 通用 `SAMPLER` 接口、Flux2 Klein 4B Distilled 四步采样和 inference mode 做了适配。
+算法基于 [luopengchen/GROW](https://github.com/luopengchen/GROW)，并针对 ComfyUI 通用 `SAMPLER` 接口、Flux2 Klein 4B Distilled 四维 latent、Qwen Image Edit 单帧五维 latent 和 inference mode 做了适配。
 
 ## 三图效果验证
 
@@ -88,6 +88,35 @@ IMAGE → VAE encode → keyed latent frequency signs → majority vote → RS d
 
 ## 防攻击性能参考
 
+### Qwen Image Edit 2511 + Claw 初步实测
+
+Qwen 工作流 `workflows/image_qwen_image_edit_2511.json` 使用 `qwen_image_edit_2511_fp8mixed.safetensors`，不加载 LoRA；原标准 `KSampler` 已等价展开为：
+
+```text
+RandomNoise + CFGGuider + BasicScheduler + KSamplerSelect
+                                      ↓
+                            GROW DiT Sampler
+                                      ↓
+                         SamplerCustomAdvanced
+```
+
+工作流保留 seed `1030828666996942`、20 steps、CFG 1、Euler、simple scheduler、denoise 1，并将 2048×2048 Claw 通过 `ImageScaleToTotalPixels` 缩放到约 0.6 MP，避免超大输入显存峰值。Qwen VAE/denoiser 的 `[B,C,1,H,W]` 单帧五维 latent 会在 GROW 内部压缩时间维执行原四维频域算法，再恢复原形状；多帧 latent 会明确拒绝，避免把视频维误当空间维。
+
+本轮写入 `zhangp36512345`，`secret_key=watermark`，profile 1（channels 4–11），`strength=1.2`，20/20 步从第一步引导。考虑 20-step 累计引导，Qwen 的 `guidance_scale` 使用 **500**，而不是 Flux 四步工作流的 4000。最终 clean → marked PSNR 为 **36.7807 dB**；无攻击检测精确恢复，ECC 有效，0 symbol 修正。
+
+这是仅使用一张 Claw 的初步攻击测试，不能与下面 Flux 三图 aggregate 混合。16 个样本中完整恢复 **12/16（75.00%）**，平均 Bit Accuracy **98.73%**，最低 **93.42%**。
+
+| 攻击组 | 完整恢复 | 平均 Bit Accuracy | 最低 | 结论 |
+|---|---:|---:|---:|---|
+| AVIF → JPG | 1/2 | 98.68% | 97.37% | q95 成功，q80 失败 |
+| HEIF → JPG | **2/2** | **100.00%** | **100.00%** | q80、q95 原始码字零错误 |
+| JXL → JPG | 1/2 | 98.68% | 98.03% | q95 经 1 symbol 修正成功，q80 失败 |
+| JPEG quality | 4/6 | 97.70% | 93.42% | q95/q90/q80/q70 成功；q50、q30 失败 |
+| Rotate 10°/30° | **2/2** | **100.00%** | **100.00%** | 反向角搜索均恢复且原始码字零错误 |
+| Crop 90%/75% | **2/2** | 99.34% | 98.68% | crop-scale 搜索均恢复 |
+
+JPEG q70 及以上全部成功；q50、q30 分别只有 94.08%、93.42% bit accuracy，损坏超过 4-parity RS 的两-symbol纠错能力，均 `ecc_valid=False`。现代压缩中 AVIF q80 与 JXL q80 也失败，而对应 q95 成功；这反映在 36.78 dB 质量门槛下，压缩鲁棒余量低于先前更强但不满足 PSNR 的参数。测试脚本、API prompt、生成图、攻击图和逐样本原始结果位于忽略的 `validation/qwen_claw/`，不纳入版本控制。
+
 ### 最新 Flux2 + ECC 实测
 
 基准图是 Dog、Claw、Girl 使用 **profile 1（channels 4–11）**生成的 watermarked PNG，clean → marked PSNR 分别为 39.58、39.74、36.78 dB，均满足 35 dB。共生成并检测 48 个攻击样本：AVIF/HEIF/JXL q80、q95 回转 JPG，JPEG quality 95/90/80/70/50/30，旋转 10°/30°，中心裁剪 90%/75% 后放大。所有样本都由服务器上最新部署的 `GROWWatermarkDetect` 使用相同 `channel_start=4`、`max_channels=8` 检测。
@@ -103,6 +132,20 @@ IMAGE → VAE encode → keyed latent frequency signs → majority vote → RS d
 | Rotate 10°/30° | 2/6 | 67.87% | 51.32% | Claw 10°、30°均由反向角搜索恢复 |
 | Crop 90%/75% | **6/6** | **100.00%** | **100.00%** | 对应 0.90/0.75 scale 搜索全部原始码字零错误 |
 | **合计** | **43/48** | **95.92%** | **51.32%** | 完整恢复率 **89.58%** |
+
+### Resize 与 crop+upscale 对照（Flux2 profile 1）
+
+为区分“缩放插值损失”和“检测尺寸变化”，对 Dog（752×1360）、Claw（1024×1024）、Girl（768×1344）三张已验证 profile 1 水印图新增了无损 PNG 攻击。攻击和恢复统一使用 Pillow `LANCZOS`，并保持 `channel_start=4`、`max_channels=8` 及其他 detector 布局参数不变。
+
+| 攻击 | 样本数 | 完整恢复 | 结论 |
+|---|---:|---:|---|
+| 中心 crop 90%/75% 后放大回原尺寸 | 6 | **6/6** | `crop_scale` 搜索均恢复 |
+| 纯 resize 至 99%/90%/75%，以缩小后的尺寸检测 | 9 | **0/9** | 三档、三图均 `ecc_valid=False` |
+| 纯 resize 至 99%/90%/75%，再精确恢复原宽高后检测 | 9 | **9/9** | 不需要 robust search 即可恢复 |
+
+这表明本轮 profile 1 + LANCZOS 条件下，纯缩放失败的主因是检测时尺寸改变：VAE latent 的空间网格随之改变，而 keyed frequency layout 由该网格重建。它**不**说明下采样再上采样本身已经擦除了水印。实际产品应把嵌入时图像宽高作为检测配置的一部分；对未知来源图片则应搜索有限的规范尺寸候选。缩放软件、插值核、长边对齐与取整规则都可能改变结果，因此不能把本表外推为所有 resize 实现都能恢复。逐项尺寸、检测输出及 margin 见 `validation/resize_attack_2026-07-21/report.md`。
+
+同一矩阵随后以 Pillow `BILINEAR`、`BICUBIC` 和 `NEAREST` 复测；四种核（含 LANCZOS）均得到“缩小尺寸检测 **0/9**、缩小再精确恢复原宽高 **9/9**”。恢复后最低 vote margin 分别为 0.684211、0.789474、0.684211、0.894737；核会影响余量，但未改变本轮的 ECC 成败边界。
 
 JPEG “percent/quality”系列的失败边界：
 
@@ -135,13 +178,14 @@ ComfyUI/custom_nodes/comfyui-dit-watermark
 
 ## 工作流
 
-仓库只保留一份修改后的 UI 工作流：
+仓库保留两份面向不同模型的 UI 工作流，不保存重复的 API 工作流 JSON：
 
 ```text
 workflows/flux2_klein_image_edit_grow.json
+workflows/image_qwen_image_edit_2511.json
 ```
 
-它包含 identity prompt、`GROW DiT Sampler`、无需预知水印内容的检测节点，以及 `watermark=zhangp36512345`。
+两者都包含 identity prompt、`GROW DiT Sampler`、无需预知水印内容的检测节点，以及 `watermark=zhangp36512345`。Qwen 版本使用 fp8 模型且不加载 LoRA，并通过高级采样组件为原标准 KSampler 增加可接入的 `SAMPLER` 输入。
 
 工作流注入：
 
@@ -156,7 +200,7 @@ python scripts/inject_workflow.py input.json output.json `
 ## 兼容性与限制
 
 - 已在 ComfyUI 0.26.0、Flux2 Klein 4B Distilled、Euler 四步采样上验证。
-- 其他返回四维 `[B,C,H,W]` latent 的图像 DiT 可复用 sampler wrapper。
+- 返回四维 `[B,C,H,W]` 或单帧五维 `[B,C,1,H,W]` latent 的图像 DiT 可复用 sampler wrapper；多帧视频 latent 当前不支持。
 - 检测节点已支持旋转与裁剪/尺度 robust search；裁剪实测稳定，旋转仍有明显残余错误。
 - 抗压缩能力与图像内容相关，应为实际图片保留纠错余量。
 - secret key 会以明文保存在工作流 JSON 中，不应把生产密钥放入公开工作流。

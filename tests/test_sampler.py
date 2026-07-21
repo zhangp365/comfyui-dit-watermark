@@ -69,6 +69,22 @@ class SamplerProxyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "channel_start"):
             settings.validate()
 
+    def test_proxy_guides_qwen_single_frame_5d_latent(self) -> None:
+        settings = GrowSettings(
+            watermark="grow",
+            secret_key="secret",
+            strength=0.02,
+            guidance_scale=50.0,
+            max_channels=8,
+        )
+        proxy = GrowDenoiserProxy(
+            FakeDenoiser(), settings, torch.tensor([1.0, 0.0])
+        )
+        latent = torch.randn(1, 16, 1, 32, 32)
+        guided = proxy(latent, torch.tensor([1.0]))
+        self.assertEqual(guided.shape, latent.shape)
+        self.assertEqual(proxy.guided_calls, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

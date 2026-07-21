@@ -102,9 +102,10 @@ class GrowDenoiserProxy:
 
     def __call__(self, x: torch.Tensor, sigma: torch.Tensor, **kwargs):
         denoised = self._denoiser(x, sigma, **kwargs)
-        if not isinstance(denoised, torch.Tensor) or denoised.ndim != 4:
+        if not isinstance(denoised, torch.Tensor) or denoised.ndim not in (4, 5):
             raise ValueError(
-                "GROW requires the sampler denoiser to return a 4D [B,C,H,W] tensor"
+                "GROW requires a 4D [B,C,H,W] or single-frame 5D "
+                "[B,C,1,H,W] sampler tensor"
             )
         if self._step_index(sigma) < self.start_step:
             return denoised

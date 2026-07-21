@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 import unittest
 
 from scripts.inject_workflow import inject_workflow
@@ -17,6 +19,59 @@ def node(node_id, node_type, inputs=None, outputs=None):
 
 
 class WorkflowInjectionTests(unittest.TestCase):
+    def test_qwen_workflow_uses_grow_advanced_sampler_path(self) -> None:
+        workflow_path = (
+            Path(__file__).resolve().parents[1]
+            / "workflows"
+            / "image_qwen_image_edit_2511.json"
+        )
+        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        nodes = {item["id"]: item for item in workflow["nodes"]}
+        types = [item["type"] for item in nodes.values()]
+
+        self.assertNotIn("KSampler", types)
+        self.assertNotIn("LoraLoaderModelOnly", types)
+        for node_type in (
+            "ImageScaleToTotalPixels",
+            "KSamplerSelect",
+            "GROWDiTSampler",
+            "SamplerCustomAdvanced",
+            "GROWWatermarkDetect",
+        ):
+            self.assertEqual(types.count(node_type), 1)
+
+        select_id = next(key for key, item in nodes.items() if item["type"] == "KSamplerSelect")
+        grow_id = next(key for key, item in nodes.items() if item["type"] == "GROWDiTSampler")
+        sampler_id = next(
+            key for key, item in nodes.items() if item["type"] == "SamplerCustomAdvanced"
+        )
+        sampler_links = [link for link in workflow["links"] if link[5] == "SAMPLER"]
+        self.assertTrue(
+            any(link[1] == select_id and link[3] == grow_id for link in sampler_links)
+        )
+        self.assertTrue(
+            any(link[1] == grow_id and link[3] == sampler_id for link in sampler_links)
+        )
+
+        grow = nodes[grow_id]
+        self.assertEqual(grow["widgets_values"][0], "zhangp36512345")
+        self.assertEqual(grow["widgets_values"][3], 500)
+        self.assertEqual(grow["widgets_values"][7:9], [8, 4])
+
+        scale_id = next(
+            key for key, item in nodes.items() if item["type"] == "ImageScaleToTotalPixels"
+        )
+        self.assertEqual(nodes[scale_id]["widgets_values"], ["lanczos", 0.6, 1])
+        image_links = [link for link in workflow["links"] if link[5] == "IMAGE"]
+        self.assertTrue(any(link[1] == 41 and link[3] == scale_id for link in image_links))
+        clip = next(item for item in nodes.values() if item["type"] == "CLIPLoader")
+        self.assertEqual(clip["widgets_values"][-1], "cpu")
+        unet = next(item for item in nodes.values() if item["type"] == "UNETLoader")
+        self.assertEqual(
+            unet["widgets_values"],
+            ["qwen_image_edit_2511_fp8mixed.safetensors", "fp8_e4m3fn"],
+        )
+
     def test_sampler_link_is_split_and_detector_is_connected(self) -> None:
         graph = {
             "state": {"lastNodeId": 4, "lastLinkId": 12},

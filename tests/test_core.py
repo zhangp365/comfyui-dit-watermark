@@ -75,6 +75,19 @@ class CoreTests(unittest.TestCase):
         self.assertLess(after.item(), before.item())
         self.assertFalse(guided.is_inference())
 
+    def test_qwen_single_frame_5d_latent_round_trip(self) -> None:
+        qwen_latent = self.latent.unsqueeze(2)
+        layout = build_layout(
+            qwen_latent, "grow", "secret", 0.15, 0.45, 8, 0.01
+        )
+        guided, before, after = guide_denoised(qwen_latent, layout, 50.0)
+        self.assertEqual(guided.shape, qwen_latent.shape)
+        self.assertLess(after.item(), before.item())
+
+    def test_multiframe_5d_latent_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "single-frame"):
+            build_layout(self.latent.unsqueeze(2).expand(-1, -1, 2, -1, -1), "grow", "secret")
+
     def test_extraction_recovers_a_strongly_guided_payload(self) -> None:
         layout = build_layout(
             self.latent, "grow", "secret", 0.10, 0.50, 8, 0.1

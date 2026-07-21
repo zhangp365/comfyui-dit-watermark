@@ -42,6 +42,18 @@ class DetectionResult:
     raw_codeword_hex: str
 
 
+def image_latent_4d(latent: torch.Tensor) -> tuple[torch.Tensor, bool]:
+    """Normalize Flux 4D or single-frame Qwen 5D latents to [B,C,H,W]."""
+    if latent.ndim == 4:
+        return latent, False
+    if latent.ndim == 5 and latent.shape[2] == 1:
+        return latent.squeeze(2), True
+    raise ValueError(
+        "expected a 4D [B,C,H,W] latent or single-frame 5D "
+        f"[B,C,1,H,W] latent, got {tuple(latent.shape)}"
+    )
+
+
 def frequency_transform(latent: torch.Tensor) -> torch.Tensor:
     """Real-part orthonormal FFT used as the differentiable DCT proxy in GROW."""
     return torch.fft.fft2(latent.float(), norm="ortho").real
@@ -102,8 +114,7 @@ def build_layout_for_bits(
     channel_start: int = 0,
 ) -> WatermarkLayout:
     """Build a deterministic layout for an already encoded elastic frame."""
-    if latent.ndim != 4:
-        raise ValueError(f"expected a 4D [B,C,H,W] latent, got {tuple(latent.shape)}")
+    latent, _ = image_latent_4d(latent)
     if not 0.0 <= dct_min < dct_max <= 1.0:
         raise ValueError("require 0 <= dct_min < dct_max <= 1")
     if max_channels <= 0:
@@ -220,24 +231,27 @@ def guide_denoised(
     """Apply one fp32 GROW gradient step to a predicted clean latent."""
     if guidance_scale <= 0:
         raise ValueError("guidance_scale must be positive")
+    denoised_4d, was_5d = image_latent_4d(denoised)
     original_dtype = denoised.dtype
     # ComfyUI may call samplers under `torch.inference_mode()`. Merely enabling
     # gradients does not turn inference tensors back into autograd tensors, so
     # disable inference mode locally before cloning the tiny latent to fp32.
     with torch.inference_mode(False), torch.enable_grad():
-        candidate = denoised.detach().float().clone().requires_grad_(True)
+        candidate = denoised_4d.detach().float().clone().requires_grad_(True)
         before = _frequency_loss(candidate, layout)
         gradient = torch.autograd.grad(before, candidate)[0]
         guided = candidate - guidance_scale * gradient
         after = _frequency_loss(guided, layout)
-    return guided.detach().to(original_dtype), before.detach(), after.detach()
+    guided = guided.detach().to(original_dtype)
+    if was_5d:
+        guided = guided.unsqueeze(2)
+    return guided, before.detach(), after.detach()
 
 
 @torch.no_grad()
 def extract_bits(latent: torch.Tensor, layout: WatermarkLayout) -> DetectionResult:
     """Read keyed frequency signs and majority-vote each repeated payload bit."""
-    if latent.ndim != 4:
-        raise ValueError(f"expected a 4D [B,C,H,W] latent, got {tuple(latent.shape)}")
+    latent, _ = image_latent_4d(latent)
     transformed = frequency_transform(_center_patch(latent[:1], layout.center_ratio))
     decoded = [0] * len(layout.message_bits)
     margins = [0.0] * len(layout.message_bits)
