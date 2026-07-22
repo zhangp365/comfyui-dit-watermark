@@ -29,6 +29,9 @@ class WorkflowInjectionTests(unittest.TestCase):
         nodes = {item["id"]: item for item in workflow["nodes"]}
         types = [item["type"] for item in nodes.values()]
 
+        load_image = next(item for item in nodes.values() if item["type"] == "LoadImage")
+        self.assertEqual(load_image["widgets_values"][0], "test/claw.jpg")
+
         self.assertNotIn("KSampler", types)
         self.assertNotIn("LoraLoaderModelOnly", types)
         for node_type in (
