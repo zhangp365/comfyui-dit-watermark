@@ -1,5 +1,6 @@
 """Model-agnostic GROW latent watermark primitives."""
 
+from .config import GrowConfig
 from .codec import bits_to_message, message_to_bits
 from .ecc import (
     FrameDecodeResult,
@@ -21,6 +22,7 @@ from .core import (
 __all__ = [
     "DetectionResult",
     "FrameDecodeResult",
+    "GrowConfig",
     "WatermarkLayout",
     "bits_to_message",
     "build_layout",

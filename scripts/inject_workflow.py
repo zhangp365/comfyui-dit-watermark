@@ -10,20 +10,6 @@ import shutil
 from typing import Any
 
 
-DEFAULT_WIDGETS = [
-    "zhangp36512345",
-    "watermark",
-    1.2,
-    4000.0,
-    0.0,
-    0.15,
-    0.45,
-    8,
-    0,
-    1.0,
-]
-
-
 def _graphs(workflow: dict[str, Any]):
     yield workflow
     definitions = workflow.get("definitions", {})
@@ -57,7 +43,7 @@ def inject_graph(
     dct_min: float = 0.15,
     dct_max: float = 0.45,
     max_channels: int = 8,
-    channel_start: int = 0,
+    channel_start: int = 4,
     center_ratio: float = 1.0,
     max_watermark_bytes: int = 64,
     robust_mode: str = "none",
@@ -92,7 +78,9 @@ def inject_graph(
     source = _node(graph, link["origin_id"])
     target = _node(graph, link["target_id"])
     grow_id = last_node + 1
+    config_id = grow_id + 1
     grow_to_sampler = last_link + 1
+    config_to_grow = grow_to_sampler + 1
     source_pos = source.get("pos", [0, 0])
     target_pos = target.get("pos", [400, 0])
     grow_pos = [
@@ -116,18 +104,6 @@ def inject_graph(
             "type": "SAMPLER",
         }
     )
-    widgets = [
-        watermark,
-        secret_key,
-        strength,
-        guidance_scale,
-        start_ratio,
-        dct_min,
-        dct_max,
-        max_channels,
-        channel_start,
-        center_ratio,
-    ]
     grow_node = {
         "id": grow_id,
         "type": "GROWDiTSampler",
@@ -137,7 +113,8 @@ def inject_graph(
         "order": max((node.get("order", 0) for node in graph["nodes"]), default=0) + 1,
         "mode": 0,
         "inputs": [
-            {"name": "sampler", "type": "SAMPLER", "link": link["id"]}
+            {"name": "sampler", "type": "SAMPLER", "link": link["id"]},
+            {"name": "config", "type": "GROW_CONFIG", "link": config_to_grow},
         ],
         "outputs": [
             {"name": "sampler", "type": "SAMPLER", "links": [grow_to_sampler]}
@@ -145,13 +122,49 @@ def inject_graph(
         "properties": {
             "Node name for S&R": "GROWDiTSampler",
             "cnr_id": "comfyui-dit-watermark",
-            "ver": "0.2.0",
+            "ver": "0.4.0",
         },
-        "widgets_values": widgets,
+        "widgets_values": [watermark, strength, guidance_scale, start_ratio],
     }
-    graph["nodes"].append(grow_node)
-    graph["state"]["lastNodeId"] = grow_id
-    graph["state"]["lastLinkId"] = grow_to_sampler
+    config_node = {
+        "id": config_id,
+        "type": "GROWWatermarkConfig",
+        "pos": [float(grow_pos[0]), float(grow_pos[1]) - 300],
+        "size": [330, 230],
+        "flags": {},
+        "order": grow_node["order"] + 1,
+        "mode": 0,
+        "inputs": [],
+        "outputs": [
+            {"name": "config", "type": "GROW_CONFIG", "links": [config_to_grow]}
+        ],
+        "properties": {
+            "Node name for S&R": "GROWWatermarkConfig",
+            "cnr_id": "comfyui-dit-watermark",
+            "ver": "0.4.0",
+        },
+        "widgets_values": [
+            secret_key,
+            dct_min,
+            dct_max,
+            max_channels,
+            channel_start,
+            center_ratio,
+        ],
+    }
+    graph["nodes"].extend([grow_node, config_node])
+    graph["links"].append(
+        {
+            "id": config_to_grow,
+            "origin_id": config_id,
+            "origin_slot": 0,
+            "target_id": grow_id,
+            "target_slot": 1,
+            "type": "GROW_CONFIG",
+        }
+    )
+    graph["state"]["lastNodeId"] = config_id
+    graph["state"]["lastLinkId"] = config_to_grow
 
     if add_detector:
         vae_decoders = [node for node in graph["nodes"] if node.get("type") == "VAEDecode"]
@@ -159,9 +172,10 @@ def inject_graph(
         if len(vae_decoders) != 1 or len(vae_loaders) != 1:
             raise ValueError("detector injection requires one VAEDecode and one VAELoader")
         decoder, vae_loader = vae_decoders[0], vae_loaders[0]
-        detector_id = grow_id + 1
-        image_link = grow_to_sampler + 1
-        vae_link = grow_to_sampler + 2
+        detector_id = config_id + 1
+        image_link = config_to_grow + 1
+        vae_link = config_to_grow + 2
+        config_to_detector = config_to_grow + 3
         decoder_pos = decoder.get("pos", [1200, 200])
         detector = {
             "id": detector_id,
@@ -169,11 +183,16 @@ def inject_graph(
             "pos": [float(decoder_pos[0]) + 320, float(decoder_pos[1]) + 180],
             "size": [350, 310],
             "flags": {},
-            "order": grow_node["order"] + 1,
+            "order": config_node["order"] + 1,
             "mode": 0,
             "inputs": [
                 {"name": "image", "type": "IMAGE", "link": image_link},
                 {"name": "vae", "type": "VAE", "link": vae_link},
+                {
+                    "name": "config",
+                    "type": "GROW_CONFIG",
+                    "link": config_to_detector,
+                },
             ],
             "outputs": [
                 {"name": "decoded_message", "type": "STRING", "links": []},
@@ -185,18 +204,9 @@ def inject_graph(
             "properties": {
                 "Node name for S&R": "GROWWatermarkDetect",
                 "cnr_id": "comfyui-dit-watermark",
-                "ver": "0.2.0",
+                "ver": "0.4.0",
             },
-            "widgets_values": [
-                secret_key,
-                dct_min,
-                dct_max,
-                max_channels,
-                channel_start,
-                center_ratio,
-                max_watermark_bytes,
-                robust_mode,
-            ],
+            "widgets_values": [max_watermark_bytes, robust_mode],
         }
         graph["nodes"].append(detector)
         graph["links"].extend(
@@ -217,12 +227,21 @@ def inject_graph(
                     "target_slot": 1,
                     "type": "VAE",
                 },
+                {
+                    "id": config_to_detector,
+                    "origin_id": config_id,
+                    "origin_slot": 0,
+                    "target_id": detector_id,
+                    "target_slot": 2,
+                    "type": "GROW_CONFIG",
+                },
             ]
         )
+        config_node["outputs"][0]["links"].append(config_to_detector)
         _append_output_link(decoder, 0, image_link)
         _append_output_link(vae_loader, 0, vae_link)
         graph["state"]["lastNodeId"] = detector_id
-        graph["state"]["lastLinkId"] = vae_link
+        graph["state"]["lastLinkId"] = config_to_detector
 
     text_nodes = [node for node in graph["nodes"] if node.get("type") == "CLIPTextEncode"]
     if len(text_nodes) == 1:
@@ -250,7 +269,7 @@ def main() -> None:
     parser.add_argument("--dct-min", type=float, default=0.15)
     parser.add_argument("--dct-max", type=float, default=0.45)
     parser.add_argument("--max-channels", type=int, default=8)
-    parser.add_argument("--channel-start", type=int, default=0)
+    parser.add_argument("--channel-start", type=int, default=4)
     parser.add_argument("--center-ratio", type=float, default=1.0)
     parser.add_argument("--max-watermark-bytes", type=int, default=64)
     parser.add_argument(

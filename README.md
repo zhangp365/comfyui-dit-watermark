@@ -34,10 +34,32 @@ PSNR 以相同输入、prompt、seed、模型和采样参数的 clean 输出为 
 
 ## 节点
 
+### GROW Watermark Config
+
+先创建一个 `GROW Watermark Config`，再把唯一的 `GROW_CONFIG` 输出同时连接到写入端和检测端：
+
+```text
+GROW Watermark Config ─┬→ GROW DiT Sampler
+                       └→ GROW Watermark Detect
+```
+
+该节点统一保存所有必须严格一致的布局参数，避免在两端重复填写后产生难以察觉的错配：
+
+| 输入 | 作用 | 默认值 |
+|---|---|---:|
+| `secret_key` | 决定频率坐标顺序 | `watermark` |
+| `dct_min`, `dct_max` | 归一化中频范围 | `0.15`, `0.45` |
+| `max_channels` | 使用的 latent 通道数 | `8` |
+| `channel_start` | 连续通道 profile 的起始 latent channel | `4` |
+| `center_ratio` | 使用的中心 latent 比例 | `1.0` |
+
+`secret_key` 会以明文保存在工作流 JSON 中；生产环境应妥善保护工作流文件，不要把真实密钥提交到公开仓库。
+
 ### GROW DiT Sampler
 
 ```text
-KSamplerSelect → GROW DiT Sampler → SamplerCustomAdvanced
+KSamplerSelect ─────────→ GROW DiT Sampler → SamplerCustomAdvanced
+GROW Watermark Config ──→ GROW DiT Sampler
 ```
 
 节点在选定的去噪步骤拦截 DiT 预测的干净 latent `x0`，对 secret-key 控制的中频坐标计算 fp32 FFT/DCT-proxy sign-margin loss，再将引导后的 `x0` 交还原 sampler。默认 `start_ratio=0`，Flux2 四步采样从第一步开始、共引导 4/4 steps。模型、conditioning、scheduler、noise 和 VAE 权重均不修改。
@@ -45,26 +67,22 @@ KSamplerSelect → GROW DiT Sampler → SamplerCustomAdvanced
 | 输入 | 作用 | Flux2 默认值 |
 |---|---|---:|
 | `watermark` | UTF-8 水印内容，最多 250 bytes | `zhangp36512345` |
-| `secret_key` | 决定频率坐标顺序 | `watermark` |
 | `strength` | 最小有符号频率间隔 | `1.20` |
 | `guidance_scale` | 水印梯度步长 | `4000` |
 | `start_ratio` | 开始引导的采样比例 | `0.00` |
-| `dct_min`, `dct_max` | 归一化中频范围 | `0.15`, `0.45` |
-| `max_channels` | 使用的 latent 通道数 | `8` |
-| `channel_start` | 连续通道 profile 的起始 latent channel | `4` |
-| `center_ratio` | 使用的中心 latent 比例 | `1.0` |
+| `config` | 由 `GROW Watermark Config` 提供的共享布局 | — |
 
 `strength` 在 UI 中按 0.01 步进显示，`guidance_scale` 按整数步进显示。超过 32 UTF-8 bytes 会发出长水印警告：帧越长，每个 bit 的频率重复次数越少，攻击鲁棒性越低，盲检候选长度也越多。
 
 ### GROW Watermark Detect
 
-输入生成结果 `IMAGE` 和同一个 `VAE`。检测节点无需预先提供水印内容；弹性帧包含长度和 Reed–Solomon 校验信息，但必须使用相同 secret key、频带、起始通道、通道数和中心比例。`max_watermark_bytes` 控制盲检长度上限，`robust_mode` 可选择 `none`、`rotation`、`crop_scale` 或组合搜索。
+输入生成结果 `IMAGE`、同一个 `VAE`，以及写入端使用的同一条 `GROW_CONFIG` 连接。检测节点无需预先提供水印内容；弹性帧包含长度和 Reed–Solomon 校验信息。`max_watermark_bytes` 控制盲检长度上限，`robust_mode` 可选择 `none`、`rotation`、`crop_scale` 或组合搜索。
 
 #### 嵌入与检测参数必须一致
 
 `secret_key`、`dct_min`、`dct_max`、`max_channels`、`channel_start`、`center_ratio` 共同定义 bit 到 latent 频率坐标的布局。检测端任一项不一致，就会读取不同系数或用不同方式拆分 bit，通常无法通过 RS 校验。水印内容无需传给 detector，但布局参数不是可从当前帧中任意盲推的。
 
-当前工作流应把 sampler 与 detector 的这些值保持一致。更稳妥的后续节点设计是增加一个 `GROW Watermark Config` 节点，输出单个 `GROW_CONFIG` 对象，同时连接 sampler 和 detector，消除两份 UI 参数漂移。检测外部攻击图片时，可对少量预定义 profile（例如 0–4）做有界搜索并以 RS 有效性和 vote margin 选优；不建议对连续的 `dct_min/dct_max` 任意暴力搜索，因为组合数、VAE 次数和误判面都会快速增加。若要让图片完全自描述，需要在固定、不随 profile 改变的 pilot 频带写入布局 ID/header，再据此读取主 payload。
+当前节点强制 sampler 与 detector 通过同一个 `GROW_CONFIG` 复用这些值，UI 不再分别暴露六个布局字段。检测外部攻击图片时，可对少量预定义 profile（例如 0–4）做有界搜索并以 RS 有效性和 vote margin 选优；不建议对连续的 `dct_min/dct_max` 任意暴力搜索，因为组合数、VAE 次数和误判面都会快速增加。若要让图片完全自描述，需要在固定、不随 profile 改变的 pilot 频带写入布局 ID/header，再据此读取主 payload。
 
 Claw/profile 1 的单参数错配实测也验证了这一点：完全匹配时原始码字零错误；分别只把 `channel_start` 改为 0、`max_channels` 改为 4、`dct_min` 改为 0.10 或 `dct_max` 改为 0.50，四种情况均 `ecc_valid=False`。注意错配 `max_channels` 时 vote margin 仍可达到 1.0，因此 margin 高不代表布局正确，必须以 RS/帧校验为准。
 
@@ -119,7 +137,7 @@ workflows/image_qwen_image_edit_2511.json
 - **Flux2 Klein**：`flux2_klein_image_edit_grow.json`，面向 Flux2 Klein 4B Distilled 四步采样。
 - **Qwen Image Edit 2511**：`image_qwen_image_edit_2511.json`，使用 fp8 模型且不加载 LoRA，并通过高级采样组件为原标准 KSampler 增加可接入的 `SAMPLER` 输入。
 
-两份工作流都包含 identity prompt、`GROW DiT Sampler`、无需预知水印内容的检测节点，以及 `watermark=zhangp36512345`。
+两份工作流都包含 identity prompt、同时连接写入与检测两端的 `GROW Watermark Config`、`GROW DiT Sampler`、无需预知水印内容的检测节点，以及 `watermark=zhangp36512345`。
 
 ## 兼容性与限制
 
@@ -127,7 +145,7 @@ workflows/image_qwen_image_edit_2511.json
 - 返回四维 `[B,C,H,W]` 或单帧五维 `[B,C,1,H,W]` latent 的图像 DiT 可复用 sampler wrapper；多帧视频 latent 当前不支持。
 - 检测节点已支持旋转与裁剪/尺度 robust search；裁剪实测稳定，旋转仍有明显残余错误。
 - 抗压缩能力与图像内容相关，应为实际图片保留纠错余量。
-- secret key 会以明文保存在工作流 JSON 中，不应把生产密钥放入公开工作流。
+- `secret_key` 会以明文保存在工作流 JSON 中，不应把生产密钥放入公开工作流。
 
 ## 测试
 
@@ -135,7 +153,7 @@ workflows/image_qwen_image_edit_2511.json
 python -m unittest discover -s tests -v
 ```
 
-测试覆盖 GROW guidance、inference mode、弹性帧、旧帧兼容、双 symbol 纠错、三 symbol 拒绝、盲长度检测、几何候选、公开 `watermark` 接口、工作流配置和攻击汇总。
+测试覆盖共享 `GROW_CONFIG` 接线与校验、GROW guidance、inference mode、弹性帧、旧帧兼容、双 symbol 纠错、三 symbol 拒绝、盲长度检测、几何候选、公开 `watermark` 接口、工作流配置和攻击汇总。
 
 ## 致谢
 

@@ -20,10 +20,13 @@ class ApiPromptTests(unittest.TestCase):
             guidance_scale=50.0,
         )
         self.assertEqual(prompt["16"]["class_type"], "GROWDiTSampler")
+        self.assertEqual(prompt["23"]["class_type"], "GROWWatermarkConfig")
         self.assertEqual(prompt["16"]["inputs"]["watermark"], "zhangp36512345")
         self.assertNotIn("message", prompt["16"]["inputs"])
         self.assertEqual(prompt["18"]["inputs"]["sampler"], ["16", 0])
         self.assertEqual(prompt["21"]["class_type"], "GROWWatermarkDetect")
+        self.assertEqual(prompt["16"]["inputs"]["config"], ["23", 0])
+        self.assertEqual(prompt["21"]["inputs"]["config"], ["23", 0])
         self.assertNotIn("message", prompt["21"]["inputs"])
         self.assertEqual(prompt["16"]["inputs"]["strength"], 0.005)
         self.assertEqual(prompt["16"]["inputs"]["guidance_scale"], 50.0)
@@ -38,8 +41,10 @@ class ApiPromptTests(unittest.TestCase):
             channel_start=8,
             max_channels=8,
         )
-        self.assertEqual(prompt["16"]["inputs"]["channel_start"], 8)
-        self.assertEqual(prompt["21"]["inputs"]["channel_start"], 8)
+        self.assertEqual(prompt["23"]["inputs"]["channel_start"], 8)
+        self.assertEqual(prompt["23"]["inputs"]["max_channels"], 8)
+        self.assertNotIn("channel_start", prompt["16"]["inputs"])
+        self.assertNotIn("channel_start", prompt["21"]["inputs"])
 
     def test_img2img_prompt_uses_input_latent_and_low_sigmas(self) -> None:
         prompt = build_flux2_prompt(

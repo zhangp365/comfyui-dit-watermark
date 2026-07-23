@@ -1,8 +1,8 @@
 {
   "id": "92112d97-bb64-4b44-86f2-ea5691ef8f6e",
   "revision": 0,
-  "last_node_id": 128,
-  "last_link_id": 210,
+  "last_node_id": 129,
+  "last_link_id": 212,
   "nodes": [
     {
       "id": 97,
@@ -195,6 +195,11 @@
           "name": "image",
           "type": "IMAGE",
           "link": 155
+        },
+        {
+          "name": "config",
+          "type": "GROW_CONFIG",
+          "link": 211
         }
       ],
       "outputs": [
@@ -238,10 +243,6 @@
           [
             "124",
             "watermark"
-          ],
-          [
-            "124",
-            "secret_key"
           ],
           [
             "73",
@@ -328,6 +329,11 @@
           "name": "vae",
           "type": "VAE",
           "link": 209
+        },
+        {
+          "name": "config",
+          "type": "GROW_CONFIG",
+          "link": 212
         }
       ],
       "outputs": [
@@ -363,14 +369,47 @@
         "Node name for S&R": "GROWWatermarkDetect"
       },
       "widgets_values": [
+        64,
+        "none"
+      ]
+    },
+    {
+      "id": 129,
+      "type": "GROWWatermarkConfig",
+      "pos": [
+        950,
+        733
+      ],
+      "size": [
+        330,
+        230
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "config",
+          "type": "GROW_CONFIG",
+          "links": [
+            211,
+            212
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GROWWatermarkConfig",
+        "cnr_id": "comfyui-dit-watermark",
+        "ver": "0.4.0"
+      },
+      "widgets_values": [
         "watermark",
         0.15,
         0.45,
         8,
         4,
-        1,
-        64,
-        "none"
+        1
       ]
     }
   ],
@@ -414,6 +453,22 @@
       126,
       0,
       "STRING"
+    ],
+    [
+      211,
+      129,
+      0,
+      75,
+      2,
+      "GROW_CONFIG"
+    ],
+    [
+      212,
+      129,
+      0,
+      128,
+      2,
+      "GROW_CONFIG"
     ]
   ],
   "groups": [],
@@ -537,8 +592,8 @@
           },
           {
             "id": "dd73d51f-4319-4442-a931-5650f3bafde2",
-            "name": "secret_key",
-            "type": "STRING",
+            "name": "config",
+            "type": "GROW_CONFIG",
             "linkIds": [
               203
             ],
@@ -1592,6 +1647,12 @@
                 "link": 144
               },
               {
+                "localized_name": "config",
+                "name": "config",
+                "type": "GROW_CONFIG",
+                "link": 203
+              },
+              {
                 "localized_name": "watermark",
                 "name": "watermark",
                 "type": "STRING",
@@ -1599,15 +1660,6 @@
                   "name": "watermark"
                 },
                 "link": 202
-              },
-              {
-                "localized_name": "secret_key",
-                "name": "secret_key",
-                "type": "STRING",
-                "widget": {
-                  "name": "secret_key"
-                },
-                "link": 203
               }
             ],
             "outputs": [
@@ -1623,19 +1675,13 @@
             "properties": {
               "Node name for S&R": "GROWDiTSampler",
               "cnr_id": "comfyui-dit-watermark",
-              "ver": "0.2.0"
+              "ver": "0.4.0"
             },
             "widgets_values": [
               "zhangp36512345",
-              "watermark",
               1.2,
               4000,
-              0,
-              0.15,
-              0.45,
-              8,
-              4,
-              1
+              0
             ]
           },
           {
@@ -1996,7 +2042,7 @@
             "origin_id": -10,
             "origin_slot": 6,
             "target_id": 124,
-            "target_slot": 1,
+            "target_slot": 2,
             "type": "STRING"
           },
           {
@@ -2004,8 +2050,8 @@
             "origin_id": -10,
             "origin_slot": 7,
             "target_id": 124,
-            "target_slot": 2,
-            "type": "STRING"
+            "target_slot": 1,
+            "type": "GROW_CONFIG"
           },
           {
             "id": 207,

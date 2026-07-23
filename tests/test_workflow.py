@@ -30,13 +30,14 @@ class WorkflowInjectionTests(unittest.TestCase):
         types = [item["type"] for item in nodes.values()]
 
         load_image = next(item for item in nodes.values() if item["type"] == "LoadImage")
-        self.assertEqual(load_image["widgets_values"][0], "test/claw.jpg")
+        self.assertEqual(load_image["widgets_values"][0], "claw.jpg")
 
         self.assertNotIn("KSampler", types)
         self.assertNotIn("LoraLoaderModelOnly", types)
         for node_type in (
             "ImageScaleToTotalPixels",
             "KSamplerSelect",
+            "GROWWatermarkConfig",
             "GROWDiTSampler",
             "SamplerCustomAdvanced",
             "GROWWatermarkDetect",
@@ -57,10 +58,17 @@ class WorkflowInjectionTests(unittest.TestCase):
         )
 
         grow = nodes[grow_id]
+        config = next(
+            item for item in nodes.values() if item["type"] == "GROWWatermarkConfig"
+        )
         self.assertEqual(grow["widgets_values"][0], "zhangp36512345")
-        self.assertEqual(grow["widgets_values"][3], 500)
-        self.assertEqual(grow["widgets_values"][7:9], [8, 4])
-
+        self.assertEqual(grow["widgets_values"][2], 500)
+        self.assertEqual(config["widgets_values"][3:5], [8, 4])
+        config_links = [link for link in workflow["links"] if link[5] == "GROW_CONFIG"]
+        self.assertEqual(
+            {(link[1], link[3]) for link in config_links},
+            {(config["id"], grow["id"]), (config["id"], 83)},
+        )
         scale_id = next(
             key for key, item in nodes.items() if item["type"] == "ImageScaleToTotalPixels"
         )
@@ -73,6 +81,51 @@ class WorkflowInjectionTests(unittest.TestCase):
         self.assertEqual(
             unet["widgets_values"],
             ["qwen_image_edit_2511_fp8mixed.safetensors", "fp8_e4m3fn"],
+        )
+
+    def test_flux_workflow_passes_one_root_config_into_sampler_subgraph(self) -> None:
+        workflow_path = (
+            Path(__file__).resolve().parents[1]
+            / "workflows"
+            / "flux2_klein_image_edit_grow.json"
+        )
+        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        root_nodes = {item["id"]: item for item in workflow["nodes"]}
+        config = next(
+            item for item in root_nodes.values()
+            if item["type"] == "GROWWatermarkConfig"
+        )
+        detector = next(
+            item for item in root_nodes.values()
+            if item["type"] == "GROWWatermarkDetect"
+        )
+        subgraph_instance = next(
+            item for item in root_nodes.values()
+            if item["type"] == workflow["definitions"]["subgraphs"][0]["id"]
+        )
+        root_config_links = [
+            link for link in workflow["links"] if link[5] == "GROW_CONFIG"
+        ]
+        self.assertEqual(
+            {(link[1], link[3]) for link in root_config_links},
+            {
+                (config["id"], subgraph_instance["id"]),
+                (config["id"], detector["id"]),
+            },
+        )
+
+        subgraph = workflow["definitions"]["subgraphs"][0]
+        sampler = next(
+            item for item in subgraph["nodes"] if item["type"] == "GROWDiTSampler"
+        )
+        self.assertEqual(sampler["inputs"][1]["type"], "GROW_CONFIG")
+        self.assertTrue(
+            any(
+                link["type"] == "GROW_CONFIG"
+                and link["origin_id"] == -10
+                and link["target_id"] == sampler["id"]
+                for link in subgraph["links"]
+            )
         )
 
     def test_sampler_link_is_split_and_detector_is_connected(self) -> None:
@@ -96,20 +149,22 @@ class WorkflowInjectionTests(unittest.TestCase):
         }
         updated = inject_workflow(graph)
         grow = next(item for item in updated["nodes"] if item["type"] == "GROWDiTSampler")
+        config = next(
+            item for item in updated["nodes"] if item["type"] == "GROWWatermarkConfig"
+        )
         detector = next(item for item in updated["nodes"] if item["type"] == "GROWWatermarkDetect")
         old_link = next(item for item in updated["links"] if item["id"] == 10)
         new_link = next(item for item in updated["links"] if item["origin_id"] == grow["id"])
         self.assertEqual(old_link["target_id"], grow["id"])
         self.assertEqual(new_link["target_id"], 2)
-        self.assertEqual(detector["inputs"][0]["link"], 14)
-        self.assertEqual(detector["inputs"][1]["link"], 15)
-        self.assertEqual(detector["widgets_values"][0], "watermark")
-        self.assertEqual(len(detector["widgets_values"]), 8)
-        self.assertEqual(detector["widgets_values"][4], 0)
-        self.assertEqual(detector["widgets_values"][-2:], [64, "none"])
+        self.assertEqual(detector["inputs"][0]["link"], 15)
+        self.assertEqual(detector["inputs"][1]["link"], 16)
+        self.assertEqual(detector["inputs"][2]["link"], 17)
+        self.assertEqual(config["outputs"][0]["links"], [14, 17])
+        self.assertEqual(config["widgets_values"], ["watermark", 0.15, 0.45, 8, 4, 1.0])
+        self.assertEqual(detector["widgets_values"], [64, "none"])
         self.assertEqual(grow["widgets_values"][0], "zhangp36512345")
-        self.assertEqual(grow["widgets_values"][4], 0.0)
-        self.assertEqual(grow["widgets_values"][8], 0)
+        self.assertEqual(grow["widgets_values"][3], 0.0)
 
     def test_existing_grow_node_is_not_duplicated(self) -> None:
         workflow = {"nodes": [{"id": 1, "type": "GROWDiTSampler"}], "links": []}
@@ -141,6 +196,7 @@ class WorkflowInjectionTests(unittest.TestCase):
         updated = inject_workflow(workflow)
         types = [item["type"] for item in updated["definitions"]["subgraphs"][0]["nodes"]]
         self.assertEqual(types.count("GROWDiTSampler"), 1)
+        self.assertEqual(types.count("GROWWatermarkConfig"), 1)
         self.assertEqual(types.count("GROWWatermarkDetect"), 1)
 
 

@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-dit-watermark"
-version = "0.3.0"
-description = "Fast GROW frequency-guided DiT watermarking with Reed-Solomon detection for ComfyUI"
+version = "0.4.0"
+description = "GROW DiT watermarking with shared embed/detect configuration for ComfyUI"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = ["torch>=2.1"]

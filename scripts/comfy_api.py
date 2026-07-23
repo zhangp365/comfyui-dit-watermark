@@ -23,7 +23,7 @@ def build_flux2_prompt(
     dct_min: float = 0.15,
     dct_max: float = 0.45,
     max_channels: int = 8,
-    channel_start: int = 0,
+    channel_start: int = 4,
     center_ratio: float = 1.0,
     max_watermark_bytes: int = 64,
     robust_mode: str = "none",
@@ -138,15 +138,10 @@ def build_flux2_prompt(
         },
     }
     if watermarked:
-        graph["16"] = {
-            "class_type": "GROWDiTSampler",
+        graph["23"] = {
+            "class_type": "GROWWatermarkConfig",
             "inputs": {
-                "sampler": ["15", 0],
-                "watermark": watermark,
                 "secret_key": secret_key,
-                "strength": strength,
-                "guidance_scale": guidance_scale,
-                "start_ratio": start_ratio,
                 "dct_min": dct_min,
                 "dct_max": dct_max,
                 "max_channels": max_channels,
@@ -154,17 +149,23 @@ def build_flux2_prompt(
                 "center_ratio": center_ratio,
             },
         }
+        graph["16"] = {
+            "class_type": "GROWDiTSampler",
+            "inputs": {
+                "sampler": ["15", 0],
+                "config": ["23", 0],
+                "watermark": watermark,
+                "strength": strength,
+                "guidance_scale": guidance_scale,
+                "start_ratio": start_ratio,
+            },
+        }
         graph["21"] = {
             "class_type": "GROWWatermarkDetect",
             "inputs": {
                 "image": ["19", 0],
                 "vae": ["6", 0],
-                "secret_key": secret_key,
-                "dct_min": dct_min,
-                "dct_max": dct_max,
-                "max_channels": max_channels,
-                "channel_start": channel_start,
-                "center_ratio": center_ratio,
+                "config": ["23", 0],
                 "max_watermark_bytes": max_watermark_bytes,
                 "robust_mode": robust_mode,
             },
@@ -240,7 +241,7 @@ def main() -> None:
     parser.add_argument("--dct-min", type=float, default=0.15)
     parser.add_argument("--dct-max", type=float, default=0.45)
     parser.add_argument("--max-channels", type=int, default=8)
-    parser.add_argument("--channel-start", type=int, default=0)
+    parser.add_argument("--channel-start", type=int, default=4)
     parser.add_argument("--center-ratio", type=float, default=1.0)
     parser.add_argument("--max-watermark-bytes", type=int, default=64)
     parser.add_argument(
