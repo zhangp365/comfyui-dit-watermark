@@ -88,7 +88,7 @@ class GROWDiTSampler:
                 "channel_start": (
                     "INT",
                     {
-                        "default": 0,
+                        "default": 4,
                         "min": 0,
                         "max": 255,
                         "step": 1,
@@ -137,7 +137,7 @@ class GROWWatermarkDetect:
                 "channel_start": (
                     "INT",
                     {
-                        "default": 0,
+                        "default": 4,
                         "min": 0,
                         "max": 255,
                         "step": 1,

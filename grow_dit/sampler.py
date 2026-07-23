@@ -20,7 +20,7 @@ class GrowSettings:
     dct_min: float = 0.15
     dct_max: float = 0.45
     max_channels: int = 8
-    channel_start: int = 0
+    channel_start: int = 4
     center_ratio: float = 1.0
 
     def validate(self) -> None:

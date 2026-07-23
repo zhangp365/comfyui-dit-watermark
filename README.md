@@ -51,7 +51,7 @@ KSamplerSelect → GROW DiT Sampler → SamplerCustomAdvanced
 | `start_ratio` | 开始引导的采样比例 | `0.00` |
 | `dct_min`, `dct_max` | 归一化中频范围 | `0.15`, `0.45` |
 | `max_channels` | 使用的 latent 通道数 | `8` |
-| `channel_start` | 连续通道 profile 的起始 latent channel | `0` |
+| `channel_start` | 连续通道 profile 的起始 latent channel | `4` |
 | `center_ratio` | 使用的中心 latent 比例 | `1.0` |
 
 `strength` 在 UI 中按 0.01 步进显示，`guidance_scale` 按整数步进显示。超过 32 UTF-8 bytes 会发出长水印警告：帧越长，每个 bit 的频率重复次数越少，攻击鲁棒性越低，盲检候选长度也越多。
